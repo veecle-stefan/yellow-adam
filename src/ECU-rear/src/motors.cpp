@@ -12,7 +12,7 @@
 
 constexpr int   MOTOR_PP             = 15;
 
-constexpr float SUPPLY_VOLTAGE       = 12.0f;
+constexpr float SUPPLY_VOLTAGE       = 24.0f;
 constexpr float VOLTAGE_LIMIT        = 6.0f;
 constexpr float PHASE_RESISTANCE     = 1.0f;
 
@@ -20,14 +20,14 @@ constexpr float VEL_LIMIT            = 45.0f;
 constexpr float VEL_OUTPUT_RAMP      = 1000.0f;
 
 // Current-loop PI (q & d)
-constexpr float CURR_Q_P             = 0.5f;
-constexpr float CURR_Q_I             = 50.0f;
-constexpr float CURR_Q_LIMIT         = 2.0f;
+constexpr float CURR_Q_P             = 2.0f;
+constexpr float CURR_Q_I             = 20.0f;
+constexpr float CURR_Q_LIMIT         = 3.0f;
 constexpr float CURR_Q_OUTPUT_RAMP   = 1000.0f;
 
 constexpr float CURR_D_P             = 2.0f;
-constexpr float CURR_D_I             = 50.0f;
-constexpr float CURR_D_LIMIT         = 2.0f;
+constexpr float CURR_D_I             = 20.0f;
+constexpr float CURR_D_LIMIT         = 3.0f;
 constexpr float CURR_D_OUTPUT_RAMP   = 1000.0f;
 
 // Current-loop filters
