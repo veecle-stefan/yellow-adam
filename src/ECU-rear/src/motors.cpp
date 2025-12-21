@@ -10,6 +10,28 @@
 // Global configuration
 // ==============================
 
+// Pins
+#define PIN_MOTL_PH_A 32
+#define PIN_MOTL_PH_B 33
+#define PIN_MOTL_PH_C 25
+#define PIN_MOTL_PH_EN 22
+#define PIN_MOTL_HALL_A 5
+#define PIN_MOTL_HALL_B 23
+#define PIN_MOTL_HALL_C 13
+#define PIN_MOTL_CURR_A 39
+#define PIN_MOTL_CURR_B 36
+
+#define PIN_MOTR_PH_A 26
+#define PIN_MOTR_PH_B 27
+#define PIN_MOTR_PH_C 14
+#define PIN_MOTR_PH_EN 12
+#define PIN_MOTR_HALL_A 18
+#define PIN_MOTR_HALL_B 19
+#define PIN_MOTR_HALL_C 15
+#define PIN_MOTR_CURR_A 35
+#define PIN_MOTR_CURR_B 34
+
+
 constexpr int   MOTOR_PP             = 15;
 
 constexpr float SUPPLY_VOLTAGE       = 24.0f;
@@ -69,19 +91,19 @@ constexpr BaseType_t  COMMS_TASK_CORE   = 0;  // ESP32 core 0
 // ==============================
 
 // Hall sensors (U V W pins, PP)
-HallSensor sensorL(5, 23, 13, MOTOR_PP);    // motor 1
-HallSensor sensorR(18, 19, 15, MOTOR_PP);   // motor 2
+HallSensor sensorL(PIN_MOTL_HALL_A, PIN_MOTL_HALL_B, PIN_MOTL_HALL_C, MOTOR_PP);    // motor 1
+HallSensor sensorR(PIN_MOTR_HALL_A, PIN_MOTR_HALL_B, PIN_MOTR_HALL_C, MOTOR_PP);   // motor 2
 
 // Motors & drivers
 BLDCMotor      motorL(MOTOR_PP);
-BLDCDriver3PWM driverL(32, 33, 25, 22);
+BLDCDriver3PWM driverL(PIN_MOTL_PH_A, PIN_MOTL_PH_B, PIN_MOTL_PH_C, PIN_MOTL_PH_EN);
 
 BLDCMotor      motorR(MOTOR_PP);
-BLDCDriver3PWM driver2(26, 27, 14, 21);
+BLDCDriver3PWM driverR(PIN_MOTR_PH_A, PIN_MOTR_PH_B, PIN_MOTR_PH_C, PIN_MOTR_PH_EN);
 
 // Inline current sense
-InlineCurrentSense current_senseL(SHUNT_RESISTANCE, SHUNT_GAIN, 39, 36);
-InlineCurrentSense current_senseR(SHUNT_RESISTANCE, SHUNT_GAIN, 35, 34);
+InlineCurrentSense current_senseL(SHUNT_RESISTANCE, SHUNT_GAIN, PIN_MOTL_CURR_A, PIN_MOTL_CURR_B);
+InlineCurrentSense current_senseR(SHUNT_RESISTANCE, SHUNT_GAIN, PIN_MOTR_CURR_A, PIN_MOTR_CURR_B);
 
 // Commander
 Commander command = Commander(Serial);
@@ -212,7 +234,15 @@ static void commsTask(void* pvParameters) {
 // ==============================
 
 void setupMotors() {
+
+  // safety measure first: Disable all motors!
+  pinMode(PIN_MOTL_PH_EN, OUTPUT);
+  pinMode(PIN_MOTR_PH_EN, OUTPUT);
+  digitalWrite(PIN_MOTL_PH_EN, LOW);
+  digitalWrite(PIN_MOTR_PH_EN, LOW);
+
   Serial.begin(115200);
+
   SimpleFOCDebug::enable(&Serial);
 
   // --- Sensors ---
@@ -221,18 +251,18 @@ void setupMotors() {
 
   // --- Drivers ---
   configureDriver(driverL);
-  configureDriver(driver2);
+  configureDriver(driverR);
 
   // --- Motors (link sensor+driver & common settings) ---
   configureMotorCommon(motorL, sensorL, driverL);
-  configureMotorCommon(motorR, sensorR, driver2);
+  configureMotorCommon(motorR, sensorR, driverR);
 
   // --- Current sense & FOC current PID ---
   configureCurrentSense(current_senseL, driverL, CS1_OFFSET_IA, CS1_OFFSET_IB);
   motorL.linkCurrentSense(&current_senseL);
   configureCurrentPID(motorL);
 
-  configureCurrentSense(current_senseR, driver2, CS2_OFFSET_IA, CS2_OFFSET_IB);
+  configureCurrentSense(current_senseR, driverR, CS2_OFFSET_IA, CS2_OFFSET_IB);
   motorR.linkCurrentSense(&current_senseR);
   configureCurrentPID(motorR);
 
