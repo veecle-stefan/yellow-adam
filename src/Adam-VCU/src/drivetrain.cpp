@@ -1,85 +1,127 @@
 #include "drivetrain.h"
 #include "pindefs.h"
-
-#include "driver/rmt.h"
+#include "driver/rmt_rx.h"
 #include "driver/gpio.h"
-
 // ---- Static storage for RMT & pulse data ----
 
 DriveTrain* DriveTrain::instance = nullptr;
 volatile uint16_t DriveTrain::s_pulseWidthUs[3] = {0, 0, 0};
-RingbufHandle_t DriveTrain::s_rmtRingBuf[3] = { nullptr, nullptr, nullptr };
 
+// New-driver RMT objects (file-local, one per RC channel)
+static rmt_channel_handle_t s_rmtRxChannel[3] = { nullptr, nullptr, nullptr };
+
+// 1 MHz resolution → 1 tick = 1 µs (like your old clk_div = 80)
+static constexpr uint32_t kRmtResolutionHz  = 1'000'000;
+static constexpr size_t   kRmtMaxSymbols    = 64;          // plenty for one PWM frame
+
+// Storage for received RMT symbols for each channel
+static rmt_symbol_word_t s_rxSymbols[3][kRmtMaxSymbols];
+
+// Simple channel index mapping for the callback
+static uint8_t s_rmtChannelIndex[3] = { 0, 1, 2 };
+
+// Common RX config: ignore pulses < 100 µs, stop after > 2500 µs per segment
+static const rmt_receive_config_t s_rmtReceiveConfig = {
+    .signal_range_min_ns = 100 * 1000,   // 100 µs
+    .signal_range_max_ns = 2500 * 1000, // 2.5 ms (longer segment ends the frame)
+};
 
 // Helper: configure one RMT RX channel
+// Helper: configure one RMT RX channel (new RX driver)
 void DriveTrain::initRmtRxChannel(uint8_t chIndex, gpio_num_t gpio)
 {
-    rmt_channel_t channel = kRmtChannels[chIndex];
+    if (chIndex >= 3) {
+        return;
+    }
 
-    rmt_config_t config = {};
-    config.rmt_mode = RMT_MODE_RX;
-    config.channel  = channel;
-    config.gpio_num = gpio;
-    config.clk_div  = 80; // 80 MHz APB / 80 = 1 MHz -> 1 tick = 1 µs
-    config.mem_block_num = 1;
+    // Configure RX channel
+    rmt_rx_channel_config_t cfg = {};
+    cfg.clk_src          = RMT_CLK_SRC_DEFAULT;
+    cfg.gpio_num         = gpio;
+    cfg.resolution_hz    = kRmtResolutionHz;   // 1 tick = 1 µs
+    cfg.mem_block_symbols = kRmtMaxSymbols;    // internal RMT buffer depth
+    cfg.intr_priority    = 0;
+    cfg.flags.invert_in  = 0;
+    cfg.flags.with_dma   = 0;
+    cfg.flags.io_loop_back = 0;
 
-    config.rx_config.filter_en           = true;
-    config.rx_config.filter_ticks_thresh = 100;   // ignore pulses < 100 µs
-    config.rx_config.idle_threshold      = 2500;  // idle if low for > 2500 µs
+    ESP_ERROR_CHECK(rmt_new_rx_channel(&cfg, &s_rmtRxChannel[chIndex]));
 
-    ESP_ERROR_CHECK(rmt_config(&config));
-    ESP_ERROR_CHECK(rmt_driver_install(channel, 1000, 0));  // small RX buffer
+    // Enable channel
+    ESP_ERROR_CHECK(rmt_enable(s_rmtRxChannel[chIndex]));
 
-    // Get ring buffer handle
-    ESP_ERROR_CHECK(rmt_get_ringbuf_handle(channel, &s_rmtRingBuf[chIndex]));
-    // Start receiving
-    ESP_ERROR_CHECK(rmt_rx_start(channel, true));
+    // Register receive-done callback
+    rmt_rx_event_callbacks_t cbs = {};
+    cbs.on_recv_done = &DriveTrain::rmtRxDoneCallback;
+    ESP_ERROR_CHECK(
+        rmt_rx_register_event_callbacks(s_rmtRxChannel[chIndex],
+                                        &cbs,
+                                        &s_rmtChannelIndex[chIndex]) // user_data
+    );
+
+    // Start first receive transaction
+    ESP_ERROR_CHECK(
+        rmt_receive(s_rmtRxChannel[chIndex],
+                    s_rxSymbols[chIndex],
+                    sizeof(s_rxSymbols[chIndex]),
+                    &s_rmtReceiveConfig)
+    );
 }
 
-// Helper: drain RMT ring buffer for one channel and update latest pulse width
-void DriveTrain::updatePulseFromRmt(uint8_t chIndex)
+// Called by the new RMT driver when a receive transaction completes.
+// Runs in ISR context, so keep it short and non-blocking.
+bool IRAM_ATTR DriveTrain::rmtRxDoneCallback(rmt_channel_handle_t channel,
+                                             const rmt_rx_done_event_data_t *edata,
+                                             void *user_data)
 {
-    RingbufHandle_t rb = s_rmtRingBuf[chIndex];
-    if (!rb) return;
+    // Figure out which logical channel this belongs to
+    uint8_t chIndex = 0;
+    if (user_data) {
+        chIndex = *static_cast<uint8_t*>(user_data);
+    }
+    if (chIndex >= 3 || !edata || !edata->received_symbols || edata->num_symbols == 0) {
+        return false;
+    }
 
-    size_t length = 0;
-    // Non-blocking receive: timeout = 0
-    rmt_item32_t* items = (rmt_item32_t*) xRingbufferReceive(rb, &length, 0);
+    const rmt_symbol_word_t *items = edata->received_symbols;
+    size_t num = edata->num_symbols;
 
-    while (items) {
-        int numItems = length / sizeof(rmt_item32_t);
+    // Find the high pulse that looks like a valid RC servo pulse
+    uint32_t pulseTicks = 0;
 
-        for (int i = 0; i < numItems; ++i) {
-            const rmt_item32_t& it = items[i];
+    for (size_t i = 0; i < num; ++i) {
+        const rmt_symbol_word_t &sym = items[i];
 
-            // RMT item has two levels: level0 for duration0, then level1 for duration1
-            // We care about whichever segment is HIGH and plausible as RC pulse.
-            uint32_t pulseTicks = 0;
-
-            if (it.level0 == 1) {
-                pulseTicks = it.duration0; // high time in ticks (1 tick = 1 µs)
-            } else if (it.level1 == 1) {
-                pulseTicks = it.duration1;
-            }
-
-            if (pulseTicks > 0) {
-                uint32_t pw = pulseTicks; // already in µs (clk_div = 80)
-
-                if (pw >= DriveTrain::PpmMinUs && pw <= DriveTrain::PpmMaxUs) {
-                    DriveTrain::s_pulseWidthUs[chIndex] = static_cast<uint16_t>(pw);
-                }
-            }
+        uint32_t candidate = 0;
+        if (sym.level0) {
+            candidate = sym.duration0;
+        } else if (sym.level1) {
+            candidate = sym.duration1;
+        } else {
+            continue;
         }
 
-        // Return buffer to RMT driver
-        vRingbufferReturnItem(rb, (void*)items);
-
-        // Try to grab more items, still non-blocking
-        items = (rmt_item32_t*) xRingbufferReceive(rb, &length, 0);
+        if (candidate >= PpmMinUs && candidate <= PpmMaxUs) {
+            pulseTicks = candidate;
+            break;
+        }
     }
+
+    if (pulseTicks != 0) {
+        // resolution is 1 µs/tick → directly store in microseconds
+        s_pulseWidthUs[chIndex] = static_cast<uint16_t>(pulseTicks);
+    }
+
+    // Re-arm RX for the next pulse using the same buffer and config.
+    // rmt_receive() is non-blocking and used this way in Espressif’s own examples.
+    (void) rmt_receive(channel,
+                       s_rxSymbols[chIndex],
+                       sizeof(s_rxSymbols[chIndex]),
+                       &s_rmtReceiveConfig);
+
+    // we didn’t wake a higher-priority task
+    return false;
 }
-
-
 
 // Map pulse width [PpmMinUs..PpmMaxUs] to [-1000..+1000]
 int16_t DriveTrain::mapPulseToCommand(uint16_t pulseWidthUs)
@@ -177,11 +219,6 @@ void DriveTrain::ControlTask()
 
 void DriveTrain::ReadChannels(int16_t& throttle, int16_t& steering, int16_t& aux)
 {
-    // First, drain RMT ring buffers to update s_pulseWidthUs[]
-    updatePulseFromRmt(0); // CH1
-    updatePulseFromRmt(1); // CH2
-    updatePulseFromRmt(2); // CH3
-
     // Copy last measured pulse widths (volatile -> local)
     uint16_t ch1 = s_pulseWidthUs[0];
     uint16_t ch2 = s_pulseWidthUs[1];

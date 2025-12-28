@@ -1,7 +1,8 @@
 #pragma once
 
 #include <Arduino.h>
-#include "driver/rmt.h"
+#include "driver/gpio.h"
+#include "driver/rmt_rx.h"   // new RMT RX driver
 #include "axle.h"
 #include "lights.h"
 
@@ -23,14 +24,6 @@ protected:
     static constexpr uint16_t PpmMinUs    = 1000;
     static constexpr uint16_t PpmMaxUs    = 2000;
     static constexpr uint16_t PpmCenterUs = 1500;
-    static constexpr rmt_channel_t kRmtChannels[3] = {
-        RMT_CHANNEL_0,
-        RMT_CHANNEL_1,
-        RMT_CHANNEL_2
-    };
-
-    // Ring buffers for each RMT channel
-    static RingbufHandle_t s_rmtRingBuf[3];
 
     // ----- Background control task -----
     void ControlTask();
@@ -54,8 +47,10 @@ protected:
     // Map a pulse width (µs) to -1000..+1000
     static int16_t mapPulseToCommand(uint16_t pulseWidthUs);
     static void initRmtRxChannel(uint8_t chIndex, gpio_num_t gpio);
-    static void updatePulseFromRmt(uint8_t chIndex);
-
+     // RMT RX callback (new driver)
+    static bool IRAM_ATTR rmtRxDoneCallback(rmt_channel_handle_t channel,
+                                            const rmt_rx_done_event_data_t *edata,
+                                            void *user_data);
 
     // Give ISRs access to static state
     static DriveTrain* instance;
