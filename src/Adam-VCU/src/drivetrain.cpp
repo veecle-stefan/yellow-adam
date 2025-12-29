@@ -1,5 +1,6 @@
 #include "drivetrain.h"
-#include "pindefs.h"
+#include "hwconfig.h"
+#include "swconfig.h"
 
 // ----- Constructor -----
 
@@ -10,19 +11,36 @@ DriveTrain::DriveTrain(RCinput* input, Axle& axleF, Axle& axleR, Lights& lights)
     , lights(lights)
 {
     // Start background control task (100 ms period)
-    xTaskCreate(
+    xTaskCreatePinnedToCore(
         [](void* pvParameters) {
             static_cast<DriveTrain*>(pvParameters)->ControlTask();
             vTaskDelete(nullptr);
         },
         "DriveTrain",
-        4096,
+        SWConfig::Tasks::MinStakSize,
         this,
-        1,
-        nullptr
+        SWConfig::Tasks::PrioHigh,
+        nullptr,
+        SWConfig::CoreAffinity::CoreApp
     );
 }
 
+bool DriveTrain::UpdateLights(Axle::MotorStates fr, Axle::MotorStates rr, int16_t accellerate)
+{
+    // if going reverse, turn on reverse light
+    if (fr.has_value() && rr.has_value() && !fr->isStale && !rr->isStale &&
+        fr->sample.speedL_meas < 0 && rr->sample.speedR_meas < 0) {
+        lights.SetReverseLight(true);
+        return true;
+    } else {
+        lights.SetReverseLight(false);
+        return false;
+    }
+
+    // if decelating, turn on brake light
+    lights.SetBrakeLight(accellerate <= DriveTrain::BrakeDecelThreshold);
+    
+}
 
 // ----- Periodic control task -----
 
@@ -32,23 +50,33 @@ void DriveTrain::ControlTask()
     TickType_t       lastWakeTime = xTaskGetTickCount();
 
     for (;;) {
+        uint32_t currTime = millis();
+
         // 1. Read input channels
-        int16_t throttle = 0;
+        int16_t accellerate = 0;
         int16_t steering = 0;
         int16_t aux      = 0;
-        this->input->ReadChannels(throttle, steering, aux);
+        this->input->ReadChannels(accellerate, steering, aux);
 
-        // 2. Run torque vectoring
+        // 2. Get motor status (from last update)
+        auto currFront = axleF.GetLatestFeedback(currTime);   // optional<HistoryFrame>
+        auto currRear  = axleR.GetLatestFeedback(currTime);
+        
+        
+        // 3. Run torque vectoring
         int16_t fl = 0, fr = 0, rl = 0, rr = 0;
-        TorqueVectoring(throttle, steering, fl, fr, rl, rr);
+        TorqueVectoring(accellerate, steering, fl, fr, rl, rr, currFront, currRear, this->lastFrontFb, this->lastRearFb, currTime);
+        this->lastFrontFb = currFront;
+        this->lastRearFb = currRear;
 
         // 3. Update all 4 motors via the two axles
         axleF.Send(fl, fr); // front left/right
         axleR.Send(rl, rr); // rear left/right
 
         //TODO: (Lights could be updated based on throttle, speed etc. here)
+        UpdateLights(currFront, currRear, accellerate);
 
-        // 4. Wait until next 100ms cycle
+        // 4. Wait until next cycle
         vTaskDelayUntil(&lastWakeTime, period);
     }
 }
@@ -56,12 +84,18 @@ void DriveTrain::ControlTask()
 
 // ----- Very naive torque vectoring -----
 
-void DriveTrain::TorqueVectoring(int16_t throttle,
+void DriveTrain::TorqueVectoring(int16_t accellerate,
                                  int16_t steering,
                                  int16_t& frontLeft,
                                  int16_t& frontRight,
                                  int16_t& rearLeft,
-                                 int16_t& rearRight)
+                                 int16_t& rearRight,
+                                Axle::MotorStates currF,
+                            Axle::MotorStates currR,
+                            Axle::MotorStates lastF,
+                            Axle::MotorStates lastR,
+                            uint32_t currTime
+                    )
 {
     // Normalize steering to [-1.0 .. +1.0]
     float s = static_cast<float>(steering) / 1000.0f;
@@ -69,7 +103,7 @@ void DriveTrain::TorqueVectoring(int16_t throttle,
     if (s < -1.0f) s = -1.0f;
 
     // Base torque from throttle, also in [-1000..+1000]
-    float T = static_cast<float>(throttle);
+    float T = static_cast<float>(accellerate);
 
     // Front axle: simple split based on steering
     // Turn right (s > 0): more torque on FL, less on FR.

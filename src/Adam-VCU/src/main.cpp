@@ -1,8 +1,8 @@
 #include <Arduino.h>
 #include "drivetrain.h"
 
-Axle axleF(UART_NUM_1, PIN_UART1_RX, PIN_UART1_TX);
-Axle axleR(UART_NUM_2, PIN_UART2_RX, PIN_UART2_TX);
+Axle axleF(UART_NUM_1, HWConfig::Pins::UART::Front::RX, HWConfig::Pins::UART::Front::TX);
+Axle axleR(UART_NUM_2, HWConfig::Pins::UART::Rear::RX, HWConfig::Pins::UART::Rear::TX);
 Lights lights;
 RCinput* input = NULL;
 DriveTrain* drive = NULL;

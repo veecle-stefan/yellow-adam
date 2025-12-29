@@ -1,21 +1,23 @@
 #include "lights.h"
+#include "swconfig.h"
 
 Lights::Lights()
 {
-    FastLED.addLeds<NEOPIXEL, PIN_LED_HEAD>(this->HeadLights, NUMLED_HEAD);
-    FastLED.addLeds<NEOPIXEL, PIN_LED_TAIL>(this->TailLights, NUMLED_TAIL);
-    FastLED.addLeds<WS2812B, PIN_LED_IND>(this->Indicators, NUMLED_IND);
+    FastLED.addLeds<NEOPIXEL, HWConfig::Pins::LEDs::Headlights>(this->HeadLights, HWConfig::Sizes::LEDs::NumHeadlights);
+    FastLED.addLeds<NEOPIXEL, HWConfig::Pins::LEDs::Taillights>(this->TailLights, HWConfig::Sizes::LEDs::NumTaillights);
+    FastLED.addLeds<WS2812B, HWConfig::Pins::LEDs::Indicators>(this->Indicators, HWConfig::Sizes::LEDs::NumIndicators);
 
-    xTaskCreate(
+    xTaskCreatePinnedToCore(
         [](void* pvParameters) {
             static_cast<Lights*>(pvParameters)->CyclicUpdateTask();
             vTaskDelete(NULL);
         },
         "Lights",
-        2048,
+        SWConfig::Tasks::MinStakSize,
         this,
-        1,
-        NULL
+        SWConfig::Tasks::PrioMed,
+        NULL,
+        SWConfig::CoreAffinity::CoreComms
     );
 }
 
@@ -64,17 +66,17 @@ void Lights::UpdateLights()
     }
 
     // 2. tail lights
-    for(uint8_t t = 0; t < NUMLED_TAIL; t++) {
+    for(uint8_t t = 0; t < HWConfig::Sizes::LEDs::NumTaillights; t++) {
         TailLights[t] = this->stTaillight ? ColTail : ColOff;
     }
     if (this->stBrakeLight) {
-        TailLights[0] = TailLights[NUMLED_TAIL-1] = ColBrake;
+        TailLights[0] = TailLights[HWConfig::Sizes::LEDs::NumTaillights-1] = ColBrake;
     }
 
     // 3. Head lights
     // 7 LEDs:
     // L L L L L L L
-    for(uint8_t h = 0; h < NUMLED_HEAD; h++) {
+    for(uint8_t h = 0; h < HWConfig::Sizes::LEDs::NumHeadlights; h++) {
         HeadLights[h] = ColOff; // reset default off state
     }
     switch (this->stHeadlights) {

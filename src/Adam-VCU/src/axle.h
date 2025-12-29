@@ -31,9 +31,18 @@ public:
 
     struct HistoryFrame
     {
+        static constexpr uint32_t StaleTimeout = 200; // older values than 200ms are ignored
+
         uint32_t TimeStamp = 0;
+        bool isStale = false;
         SerialFeedback sample;
+
+        void MarkStale(uint32_t currTime) {
+            this->isStale = (currTime - this->TimeStamp) > StaleTimeout;
+        }
     };
+
+    typedef std::optional<HistoryFrame> MotorStates;
 
     struct MotorCommand {
         int16_t motL;
@@ -49,6 +58,8 @@ public:
     Axle(uart_port_t hwSerialNum, uint8_t pinRX, uint8_t pinTX);
     bool Send(int16_t motL, int16_t motR);
     bool WaitForFeedback(HistoryFrame& out, TickType_t timeout);
+    MotorStates GetLatestFeedback();
+    MotorStates GetLatestFeedback(uint32_t currTime);
 
 protected:
     uart_port_t conn;

@@ -1,6 +1,6 @@
 #pragma once
 #include <FastLED.h>
-#include "pindefs.h"
+#include "hwconfig.h"
 
 
 class Lights {
@@ -37,9 +37,9 @@ public:
     void SetIndicator(IndicatorPosition pos, bool newState);
 
 protected:
-    CRGB HeadLights[NUMLED_HEAD];
-    CRGB TailLights[NUMLED_TAIL];
-    CRGB Indicators[NUMLED_IND];
+    CRGB HeadLights[HWConfig::Sizes::LEDs::NumHeadlights];
+    CRGB TailLights[HWConfig::Sizes::LEDs::NumTaillights];
+    CRGB Indicators[HWConfig::Sizes::LEDs::NumIndicators];
 
     HeadLightState stHeadlights;
     bool stIndicators[4] = {false, false, false, false};

@@ -1,5 +1,5 @@
 #include "rcinput.h"
-#include "pindefs.h"
+#include "hwconfig.h"
 #include "driver/rmt_rx.h"
 #include "driver/gpio.h"
 // ---- Static storage for RMT & pulse data ----
@@ -156,14 +156,14 @@ RCinput::RCinput()
     instance = this;
 
     // Configure PPM input pins as inputs
-    pinMode(PIN_PPM_CH1, INPUT_PULLUP);
-    pinMode(PIN_PPM_CH2, INPUT_PULLUP);
-    pinMode(PIN_PPM_CH3, INPUT_PULLUP);
+    pinMode(HWConfig::Pins::PPM::Channel1, INPUT_PULLUP);
+    pinMode(HWConfig::Pins::PPM::Channel2, INPUT_PULLUP);
+    pinMode(HWConfig::Pins::PPM::Channel3, INPUT_PULLUP);
 
     // Initialize three RMT RX channels
-    initRmtRxChannel(0, static_cast<gpio_num_t>(PIN_PPM_CH1));
-    initRmtRxChannel(1, static_cast<gpio_num_t>(PIN_PPM_CH2));
-    initRmtRxChannel(2, static_cast<gpio_num_t>(PIN_PPM_CH3));
+    initRmtRxChannel(0, static_cast<gpio_num_t>(HWConfig::Pins::PPM::Channel1));
+    initRmtRxChannel(1, static_cast<gpio_num_t>(HWConfig::Pins::PPM::Channel2));
+    initRmtRxChannel(2, static_cast<gpio_num_t>(HWConfig::Pins::PPM::Channel3));
 }
 
 

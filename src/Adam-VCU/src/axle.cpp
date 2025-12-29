@@ -1,7 +1,7 @@
 #include "axle.h"
-#include "pindefs.h"
+#include "hwconfig.h"
 #include "driver/uart.h"
-
+#include "swconfig.h"
 
 Axle::Axle(uart_port_t hwSerialNum, uint8_t pinRX, uint8_t pinTX):
 conn(hwSerialNum)
@@ -31,28 +31,30 @@ conn(hwSerialNum)
     uart_param_config(conn, &uart_config);
     uart_set_pin(conn, pinTX, pinRX, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
 
-      xTaskCreate(
+      xTaskCreatePinnedToCore(
         [](void* pvParameters) {
             static_cast<Axle*>(pvParameters)->SendEventHandler();
             vTaskDelete(NULL);
         },
         "AxleW",
-        2048,
+        SWConfig::Tasks::MinStakSize,
         this,
-        1,
-        NULL
+        SWConfig::Tasks::PrioHigh,
+        NULL,
+        SWConfig::CoreAffinity::CoreComms
     );
 
-     xTaskCreate(
+     xTaskCreatePinnedToCore(
         [](void* pvParameters) {
             static_cast<Axle*>(pvParameters)->ReadTask();
             vTaskDelete(NULL);
         },
         "AxleR",
-        2048,
+        SWConfig::Tasks::MinStakSize,
         this,
-        1,
-        NULL
+        SWConfig::Tasks::PrioHigh,
+        NULL,
+        SWConfig::CoreAffinity::CoreComms
     );
 
 }
@@ -84,6 +86,24 @@ bool Axle::Send(int16_t motL, int16_t motR)
 bool Axle::WaitForFeedback(HistoryFrame& out, TickType_t timeout)
 {
     return (xQueueReceive(feedbackQueue, &out, timeout) == pdTRUE);
+}
+
+Axle::MotorStates Axle::GetLatestFeedback()
+{
+    HistoryFrame frame;
+    if (xQueuePeek(feedbackQueue, &frame, 0) == pdTRUE) {
+        return frame;                // copy into optional
+    }
+    return std::nullopt;
+}
+
+Axle::MotorStates Axle::GetLatestFeedback(uint32_t currTime)
+{
+    auto temp = GetLatestFeedback();
+    if (temp.has_value()) {
+        temp->MarkStale(currTime);
+    }
+    return temp;
 }
 
 bool Axle::PushFeedback(const SerialFeedback& fb)
