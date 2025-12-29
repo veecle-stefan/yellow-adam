@@ -115,13 +115,24 @@ void Lights::CyclicUpdateTask()
 {
     const TickType_t period = pdMS_TO_TICKS(LightsUpdateFreq);
     TickType_t lastWakeTime = xTaskGetTickCount();
+    uint32_t blinkPhaseMS = 0;
 
     for(;;) {
+        // take care of blinking
+        if (this->internalBlinkPhase && (blinkPhaseMS >= BlinkOn)) {
+            blinkPhaseMS = 0;
+            this->internalBlinkPhase = false;
+        } else if (!this->internalBlinkPhase && (blinkPhaseMS >= BlinkOff)) {
+            blinkPhaseMS = 0;
+            this->internalBlinkPhase = true;
+        }
+
         // update the lights
         UpdateLights();
         FastLED.show();
 
         // sleep until next cycle
         vTaskDelayUntil(&lastWakeTime, period);
+        blinkPhaseMS += period;
     }
 }

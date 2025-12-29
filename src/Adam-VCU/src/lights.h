@@ -6,6 +6,8 @@
 class Lights {
 public:
     static constexpr uint16_t LightsUpdateFreq = 100; // ms
+    static constexpr uint32_t BlinkOn = 600; // ms
+    static constexpr uint32_t BlinkOff = 400; // ms
     static constexpr CRGB::HTMLColorCode ColOff = CRGB::Black;
     static constexpr CRGB::HTMLColorCode ColIndicator = CRGB::Red;
     static constexpr CRGB::HTMLColorCode ColDRL = CRGB::Gray10;

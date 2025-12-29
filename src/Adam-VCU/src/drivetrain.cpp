@@ -73,7 +73,7 @@ void DriveTrain::ControlTask()
         axleF.Send(fl, fr); // front left/right
         axleR.Send(rl, rr); // rear left/right
 
-        //TODO: (Lights could be updated based on throttle, speed etc. here)
+        //4. Update Lights based on throttle, speed etc.
         UpdateLights(currFront, currRear, accellerate);
 
         // 4. Wait until next cycle
