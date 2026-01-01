@@ -17,8 +17,9 @@ protected:
    
     // ----- PPM configuration -----
     // Typical RC pulse range in microseconds
-    static constexpr uint16_t PpmMinUs    = 1000;
-    static constexpr uint16_t PpmMaxUs    = 2000;
+    // Broaden accepted pulse window a bit to avoid dropping frames at extremes
+    static constexpr uint16_t PpmMinUs    = 900;
+    static constexpr uint16_t PpmMaxUs    = 2100;
     static constexpr uint16_t PpmCenterUs = 1500;
 
     // track last update timestamps for failsafe (µs)
