@@ -8,6 +8,8 @@ RCinput* input = NULL;
 DriveTrain* drive = NULL;
 
 void setup() {
+  Serial.begin(115200);
+  Serial.println("Adam VCU starting");
   input = new RCinput();
   drive = new DriveTrain(input, axleF, axleR, lights);
 }

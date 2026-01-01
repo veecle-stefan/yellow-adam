@@ -48,6 +48,8 @@ void DriveTrain::ControlTask()
 {
     const TickType_t period       = pdMS_TO_TICKS(ControlPeriodMs);
     TickType_t       lastWakeTime = xTaskGetTickCount();
+    char rcinputdebug[30];
+    uint32_t lastUpdate = 0;
 
     for (;;) {
         uint32_t currTime = millis();
@@ -56,7 +58,13 @@ void DriveTrain::ControlTask()
         int16_t accellerate = 0;
         int16_t steering = 0;
         int16_t aux      = 0;
-        this->input->ReadChannels(accellerate, steering, aux);
+        this->input->ReadChannels(accellerate, aux, steering);
+
+        if (currTime - lastUpdate > 100) {
+            snprintf(rcinputdebug, 30, "%i;%i;%i", accellerate, steering, aux);
+            Serial.println(rcinputdebug);
+            lastUpdate = currTime;
+        }
 
         // 2. Get motor status (from last update)
         auto currFront = axleF.GetLatestFeedback(currTime);   // optional<HistoryFrame>

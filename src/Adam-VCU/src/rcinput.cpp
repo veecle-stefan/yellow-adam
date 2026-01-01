@@ -2,6 +2,9 @@
 #include "hwconfig.h"
 #include "driver/rmt_rx.h"
 #include "driver/gpio.h"
+#include "esp_private/rmt.h"
+#include "hal/rmt_ll.h"
+#include "esp_log.h"
 // ---- Static storage for RMT & pulse data ----
 
 RCinput* RCinput::instance = nullptr;
@@ -16,18 +19,22 @@ static rmt_channel_handle_t s_rmtRxChannel[3] = { nullptr, nullptr, nullptr };
 // 1 MHz resolution → 1 tick = 1 µs (like your old clk_div = 80)
 static constexpr uint32_t kRmtResolutionHz  = 1'000'000;
 static constexpr size_t   kRmtMaxSymbols    = 64;          // plenty for one PWM frame
+static constexpr uint64_t kNsPerSecond      = 1'000'000'000ULL;
 
-// Storage for received RMT symbols for each channel
-static rmt_symbol_word_t s_rxSymbols[3][kRmtMaxSymbols];
+// Storage for received RMT symbols for each channel (force 4-byte alignment for RMT DMA)
+static rmt_symbol_word_t s_rxSymbols[3][kRmtMaxSymbols] __attribute__((aligned(4)));
+static rmt_receive_config_t s_rxConfig[3];
 
 // Simple channel index mapping for the callback
 static uint8_t s_rmtChannelIndex[3] = { 0, 1, 2 };
 
-// Common RX config: ignore pulses < 100 µs, stop after > 2500 µs per segment
+// Common RX config: no glitch filter, stop after > 3 ms per segment
 static const rmt_receive_config_t s_rmtReceiveConfig = {
-    .signal_range_min_ns = 100 * 1000,   // 100 µs
-    .signal_range_max_ns = 2500 * 1000, // 2.5 ms (longer segment ends the frame)
+    .signal_range_min_ns = 0,             // disable filter
+    .signal_range_max_ns = 3000 * 1000,   // 3 ms
 };
+
+static const char* kTag = "RCinput";
 
 // Helper: configure one RMT RX channel
 // Helper: configure one RMT RX channel (new RX driver)
@@ -39,7 +46,7 @@ void RCinput::initRmtRxChannel(uint8_t chIndex, gpio_num_t gpio)
 
     // Configure RX channel
     rmt_rx_channel_config_t cfg = {};
-    cfg.clk_src          = RMT_CLK_SRC_DEFAULT;
+    cfg.clk_src          = RMT_CLK_SRC_DEFAULT; // use default APB clock to avoid group conflicts
     cfg.gpio_num         = gpio;
     cfg.resolution_hz    = kRmtResolutionHz;   // 1 tick = 1 µs
     cfg.mem_block_symbols = kRmtMaxSymbols;    // internal RMT buffer depth
@@ -62,13 +69,43 @@ void RCinput::initRmtRxChannel(uint8_t chIndex, gpio_num_t gpio)
                                         &s_rmtChannelIndex[chIndex]) // user_data
     );
 
+    // Clamp receive window to hardware limits to avoid ESP_ERR_INVALID_ARG from rmt_receive()
+    uint32_t actualResolutionHz = kRmtResolutionHz;
+    esp_err_t resErr = rmt_get_channel_resolution(s_rmtRxChannel[chIndex], &actualResolutionHz);
+    if (resErr != ESP_OK) {
+        ESP_LOGW(kTag, "rmt_get_channel_resolution failed ch=%u err=%s, using requested=%u",
+                 chIndex, esp_err_to_name(resErr), actualResolutionHz);
+    }
+    const uint64_t maxFilterNs = (static_cast<uint64_t>(RMT_LL_MAX_FILTER_VALUE) * kNsPerSecond) / actualResolutionHz;
+    const uint64_t maxIdleNs   = (static_cast<uint64_t>(RMT_LL_MAX_IDLE_VALUE) * kNsPerSecond) / actualResolutionHz;
+
+    s_rxConfig[chIndex] = s_rmtReceiveConfig;
+    if (s_rxConfig[chIndex].signal_range_min_ns > maxFilterNs) {
+        s_rxConfig[chIndex].signal_range_min_ns = static_cast<uint32_t>(maxFilterNs);
+    }
+    if (s_rxConfig[chIndex].signal_range_max_ns > maxIdleNs) {
+        s_rxConfig[chIndex].signal_range_max_ns = static_cast<uint32_t>(maxIdleNs);
+    }
+    if (s_rxConfig[chIndex].signal_range_max_ns <= s_rxConfig[chIndex].signal_range_min_ns) {
+        s_rxConfig[chIndex].signal_range_max_ns = s_rxConfig[chIndex].signal_range_min_ns + 1000; // 1 µs gap
+    }
+
     // Start first receive transaction
-    ESP_ERROR_CHECK(
-        rmt_receive(s_rmtRxChannel[chIndex],
-                    s_rxSymbols[chIndex],
-                    sizeof(s_rxSymbols[chIndex]),
-                    &s_rmtReceiveConfig)
-    );
+    esp_err_t err = rmt_receive(s_rmtRxChannel[chIndex],
+                                s_rxSymbols[chIndex],
+                                sizeof(s_rxSymbols[chIndex]),
+                                &s_rxConfig[chIndex]);
+    if (err != ESP_OK) {
+        ESP_LOGE(kTag,
+                 "rmt_receive init failed ch=%u err=%s buf=%p size=%u min_ns=%u max_ns=%u res=%u",
+                 chIndex,
+                 esp_err_to_name(err),
+                 static_cast<void*>(s_rxSymbols[chIndex]),
+                 static_cast<unsigned>(sizeof(s_rxSymbols[chIndex])),
+                 s_rxConfig[chIndex].signal_range_min_ns,
+                 s_rxConfig[chIndex].signal_range_max_ns,
+                 actualResolutionHz);
+    }
 }
 
 // Called by the new RMT driver when a receive transaction completes.
@@ -113,10 +150,13 @@ bool IRAM_ATTR RCinput::rmtRxDoneCallback(rmt_channel_handle_t channel,
     }
 
     // Re-arm RX
-    (void) rmt_receive(channel,
-                       s_rxSymbols[chIndex],
-                       sizeof(s_rxSymbols[chIndex]),
-                       &s_rmtReceiveConfig);
+    esp_err_t err = rmt_receive(channel,
+                                s_rxSymbols[chIndex],
+                                sizeof(s_rxSymbols[chIndex]),
+                                &s_rxConfig[chIndex]);
+    if (err != ESP_OK) {
+        ESP_EARLY_LOGE(kTag, "rmt_receive rearm failed ch=%u err=%s", chIndex, esp_err_to_name(err));
+    }
 
     return false;
 }
@@ -156,9 +196,9 @@ RCinput::RCinput()
     instance = this;
 
     // Configure PPM input pins as inputs
-    pinMode(HWConfig::Pins::PPM::Channel1, INPUT_PULLUP);
-    pinMode(HWConfig::Pins::PPM::Channel2, INPUT_PULLUP);
-    pinMode(HWConfig::Pins::PPM::Channel3, INPUT_PULLUP);
+    pinMode(HWConfig::Pins::PPM::Channel1, INPUT);
+    pinMode(HWConfig::Pins::PPM::Channel2, INPUT);
+    pinMode(HWConfig::Pins::PPM::Channel3, INPUT);
 
     // Initialize three RMT RX channels
     initRmtRxChannel(0, static_cast<gpio_num_t>(HWConfig::Pins::PPM::Channel1));
@@ -169,7 +209,7 @@ RCinput::RCinput()
 
 
 // ----- ReadChannels: non-blocking RMT-based read -----
-void RCinput::ReadChannels(int16_t& throttle, int16_t& steering, int16_t& aux)
+void RCinput::ReadChannels(int16_t& ch1, int16_t& ch2, int16_t& ch3)
 {
     uint16_t ch[3];
     uint64_t ts[3];
@@ -193,14 +233,14 @@ void RCinput::ReadChannels(int16_t& throttle, int16_t& steering, int16_t& aux)
                  (nowUs - ts[2] < kTimeoutUs);
 
     if (!valid) {
-        throttle = 0;
-        steering = 0;
-        aux      = 0;
+        ch1 = 0;
+        ch2 = 0;
+        ch3      = 0;
         return;
     }
 
     // Map to [-1000 .. +1000]
-    throttle = mapPulseToCommand(ch[0]);
-    steering = mapPulseToCommand(ch[1]);
-    aux      = mapPulseToCommand(ch[2]);
+    ch1 = mapPulseToCommand(ch[0]);
+    ch2 = mapPulseToCommand(ch[1]);
+    ch3      = mapPulseToCommand(ch[2]);
 }

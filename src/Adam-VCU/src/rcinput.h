@@ -11,7 +11,7 @@ public:
     
     // Reads PPM/PWM channels into -1000..+1000 range
     // ch1 = throttle (accel/brake), ch2 = steering, ch3 = aux (ignored for now)
-    void ReadChannels(int16_t& throttle, int16_t& steering, int16_t& aux);
+    void ReadChannels(int16_t& ch1, int16_t& ch2, int16_t& ch3);
 
 protected:
    
