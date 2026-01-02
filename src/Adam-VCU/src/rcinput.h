@@ -1,47 +1,36 @@
 #pragma once
-
 #include <Arduino.h>
-#include "driver/gpio.h"
-#include "driver/rmt_rx.h"   // new RMT RX driver
+#include <driver/rmt_rx.h>
+#include <optional>
 
-class RCinput
-{
+class RCPWMinput {
 public:
-    RCinput();
-    
-    // Reads PPM/PWM channels into -1000..+1000 range
-    // ch1 = throttle (accel/brake), ch2 = steering, ch3 = aux (ignored for now)
-    void ReadChannels(int16_t& ch1, int16_t& ch2, int16_t& ch3);
+    // pin = GPIO_NUM_x (not int!), expects classic RC PWM 1000–2000 µs @ ~50 Hz
+    explicit RCPWMinput(gpio_num_t pin);
 
-protected:
-   
-    // ----- PPM configuration -----
-    // Typical RC pulse range in microseconds
-    // Broaden accepted pulse window a bit to avoid dropping frames at extremes
-    static constexpr uint16_t PpmMinUs    = 900;
-    static constexpr uint16_t PpmMaxUs    = 2100;
-    static constexpr uint16_t PpmCenterUs = 1500;
+    // returns ESP_OK on success
+    esp_err_t begin();
 
-    // track last update timestamps for failsafe (µs)
-    static volatile uint64_t s_lastUpdateUs[3];
+    int16_t mapRange(uint16_t timeUs);
+    std::optional<int16_t> value();
+    std::optional<int16_t> operator*();
 
-    // Very small spinlock to protect multi-field updates
-    static portMUX_TYPE s_rcMux;
-
-  
-    
-    // Map a pulse width (µs) to -1000..+1000
-    static int16_t mapPulseToCommand(uint16_t pulseWidthUs);
-    static void initRmtRxChannel(uint8_t chIndex, gpio_num_t gpio);
-     // RMT RX callback (new driver)
-    static bool IRAM_ATTR rmtRxDoneCallback(rmt_channel_handle_t channel,
+private:
+    static bool IRAM_ATTR on_rx_done_static(rmt_channel_handle_t channel,
                                             const rmt_rx_done_event_data_t *edata,
                                             void *user_data);
+    bool on_rx_done(const rmt_rx_done_event_data_t *edata);
 
-    // Give ISRs access to static state
-    static RCinput* instance;
+    gpio_num_t _pin;
+    rmt_channel_handle_t _channel = nullptr;
 
-    // Last measured pulse widths for each channel (in microseconds)
-    // ch 0 -> PIN_PPM_CH1, ch 1 -> PIN_PPM_CH2, ch 2 -> PIN_PPM_CH3
-    static volatile uint16_t s_pulseWidthUs[3];
+    // buffer for received symbols, stays in RAM
+    static constexpr size_t SYMBOL_BUF_LEN = 64;
+    rmt_symbol_word_t _symbols[SYMBOL_BUF_LEN];
+
+    rmt_receive_config_t _rx_cfg{};
+    volatile uint16_t _pulseUs = 1500;  // sane default
+    volatile uint32_t       _updateCount = 0;
+    uint32_t _lastRead = 0;
+
 };

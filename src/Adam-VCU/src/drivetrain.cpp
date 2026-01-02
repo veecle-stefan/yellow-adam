@@ -4,12 +4,19 @@
 
 // ----- Constructor -----
 
-DriveTrain::DriveTrain(RCinput* input, Axle& axleF, Axle& axleR, Lights& lights)
-    : input(input)
+DriveTrain::DriveTrain(Axle& axleF, Axle& axleR, Lights& lights)
+    : ch1(HWConfig::Pins::PPM::Channel1)
+    , ch2(HWConfig::Pins::PPM::Channel2)
+    , ch3(HWConfig::Pins::PPM::Channel3)
     , axleF(axleF)
     , axleR(axleR)
     , lights(lights)
 {
+
+    ch1.begin();
+    ch2.begin();
+    ch3.begin();
+
     // Start background control task (100 ms period)
     xTaskCreatePinnedToCore(
         [](void* pvParameters) {
@@ -50,30 +57,47 @@ void DriveTrain::ControlTask()
     TickType_t       lastWakeTime = xTaskGetTickCount();
     char rcinputdebug[30];
     uint32_t lastUpdate = 0;
+    bool failSafe = false;
 
     for (;;) {
         uint32_t currTime = millis();
 
         // 1. Read input channels
-        int16_t accellerate = 0;
-        int16_t steering = 0;
-        int16_t aux      = 0;
-        this->input->ReadChannels(accellerate, aux, steering);
-
-        if (currTime - lastUpdate > 100) {
-            snprintf(rcinputdebug, 30, "%i;%i;%i", accellerate, steering, aux);
-            Serial.println(rcinputdebug);
-            lastUpdate = currTime;
-        }
+        std::optional<int16_t> val_accell = *ch1;
+        std::optional<int16_t> val_steer  = *ch3;
+        std::optional<int16_t> val_aux    = *ch2;
 
         // 2. Get motor status (from last update)
         auto currFront = axleF.GetLatestFeedback(currTime);   // optional<HistoryFrame>
         auto currRear  = axleR.GetLatestFeedback(currTime);
-        
-        
+
+        int16_t accellerate = 0; // safe defaults
+        int16_t steering = 0;
+        int16_t aux = 0;
+        // only if all three RC values are valid and up-to-date
+        if (val_accell.has_value() && val_steer.has_value() && val_aux.has_value()) {
+            accellerate = *val_accell;
+            steering = *val_steer;
+            aux = *val_aux;
+            if (failSafe) {
+                lights.SetIndicators(false, false, false, false);
+            }
+            failSafe = false;
+            if (currTime - lastUpdate > 100) {
+                snprintf(rcinputdebug, 30, "%i;%i;%i", accellerate, steering, aux);
+                Serial.println(rcinputdebug);
+                lastUpdate = currTime;
+            }
+        } else {
+            if (!failSafe) {
+                lights.SetIndicators(true, true, true, true); // hazards to show no data
+            }
+            failSafe = true;
+        }
+
         // 3. Run torque vectoring
         int16_t fl = 0, fr = 0, rl = 0, rr = 0;
-        TorqueVectoring(accellerate, steering, fl, fr, rl, rr, currFront, currRear, this->lastFrontFb, this->lastRearFb, currTime);
+        TorqueVectoring(accellerate, steering, fl, fr, rl, rr, currFront, currRear, this->lastFrontFb, this->lastRearFb, failSafe, currTime);
         this->lastFrontFb = currFront;
         this->lastRearFb = currRear;
 
@@ -102,6 +126,7 @@ void DriveTrain::TorqueVectoring(int16_t accellerate,
                             Axle::MotorStates currR,
                             Axle::MotorStates lastF,
                             Axle::MotorStates lastR,
+                            bool failSafe,
                             uint32_t currTime
                     )
 {

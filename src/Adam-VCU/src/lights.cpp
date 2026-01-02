@@ -54,66 +54,93 @@ void Lights::SetIndicator(IndicatorPosition pos, bool newState)
     this->stIndicators[pos] = newState;
     this->internalBlinkPhase = true;
 }
+
+void Lights::SetOTA(bool onOff)
+{
+    this->stOTA = onOff;
+    this->OTAprogress = 0;
+}
+
+void Lights::SetOTAprogress(uint8_t percent)
+{
+    if (percent > 100) percent = 100;
+    this->OTAprogress = percent;
+}
     
 
 void Lights::UpdateLights()
 {
     // take all the current states and generate LED patterns
 
-    // 1. indicators
-    for(uint8_t i = 0; i < 4; i++) {
-        Indicators[i] = this->stIndicators[i] && this->internalBlinkPhase ? ColIndicator : ColOff;
-    }
+    if (stOTA) {
+        // indicators off
+        for(uint8_t i = 0; i < 4; i++) {
+            Indicators[i] = ColOff;
+        }
+         // tail lights off
+        for(uint8_t t = 0; t < HWConfig::Sizes::LEDs::NumTaillights; t++) {
+            TailLights[t] = ColOff;
+        }
+        // use headlights as percent indicator in purple
+        for(uint8_t h = 0; h < HWConfig::Sizes::LEDs::NumHeadlights; h++) {
+            HeadLights[h] = h * 100 / HWConfig::Sizes::LEDs::NumHeadlights <= this->OTAprogress ? ColOTA : ColOff;
+        }
+    } else {
 
-    // 2. tail lights
-    for(uint8_t t = 0; t < HWConfig::Sizes::LEDs::NumTaillights; t++) {
-        TailLights[t] = this->stTaillight ? ColTail : ColOff;
-    }
-    if (this->stBrakeLight) {
-        TailLights[0] = TailLights[HWConfig::Sizes::LEDs::NumTaillights-1] = ColBrake;
-    }
+        // 1. indicators
+        for(uint8_t i = 0; i < 4; i++) {
+            Indicators[i] = this->stIndicators[i] && this->internalBlinkPhase ? ColIndicator : ColOff;
+        }
 
-    // 3. Head lights
-    // 7 LEDs:
-    // L L L L L L L
-    for(uint8_t h = 0; h < HWConfig::Sizes::LEDs::NumHeadlights; h++) {
-        HeadLights[h] = ColOff; // reset default off state
-    }
-    switch (this->stHeadlights) {
-        case DRL:
-            HeadLights[0] = HeadLights[13] = ColDRL;
-            HeadLights[1] = HeadLights[12] = ColDRL;
-            HeadLights[2] = HeadLights[11] = ColDRL;
-            HeadLights[4] = HeadLights[9] = ColDRL;
-            HeadLights[5] = HeadLights[8] = ColDRL;
-            HeadLights[6] = HeadLights[7] = ColDRL;
-           break;
-        case Dipped:
-            HeadLights[0] = HeadLights[13] = ColLoBeam;
-            HeadLights[1] = HeadLights[12] = ColLoBeam;
-            HeadLights[2] = HeadLights[11] = ColLoBeam;
-            HeadLights[3] = HeadLights[10] = ColLoBeam;
-            HeadLights[4] = HeadLights[9] = ColDRL;
-            HeadLights[5] = HeadLights[8] = ColDRL;
-            HeadLights[6] = HeadLights[7] = ColDRL;
+        // 2. tail lights
+        for(uint8_t t = 0; t < HWConfig::Sizes::LEDs::NumTaillights; t++) {
+            TailLights[t] = this->stTaillight ? ColTail : ColOff;
+        }
+        if (this->stBrakeLight) {
+            TailLights[0] = TailLights[HWConfig::Sizes::LEDs::NumTaillights-1] = ColBrake;
+        }
+
+        // 3. Head lights
+        // 7 LEDs:
+        // L L L L L L L
+        for(uint8_t h = 0; h < HWConfig::Sizes::LEDs::NumHeadlights; h++) {
+            HeadLights[h] = ColOff; // reset default off state
+        }
+        switch (this->stHeadlights) {
+            case DRL:
+                HeadLights[0] = HeadLights[13] = ColDRL;
+                HeadLights[1] = HeadLights[12] = ColDRL;
+                HeadLights[2] = HeadLights[11] = ColDRL;
+                HeadLights[4] = HeadLights[9] = ColDRL;
+                HeadLights[5] = HeadLights[8] = ColDRL;
+                HeadLights[6] = HeadLights[7] = ColDRL;
             break;
-        case High:
-            HeadLights[0] = HeadLights[13] = ColHiBeam;
-            HeadLights[1] = HeadLights[12] = ColHiBeam;
-            HeadLights[2] = HeadLights[11] = ColHiBeam;
-            HeadLights[3] = HeadLights[10] = ColHiBeam;
-            HeadLights[4] = HeadLights[9] = ColDRL;
-            HeadLights[5] = HeadLights[8] = ColDRL;
-            HeadLights[6] = HeadLights[7] = ColDRL;
-            break;
+            case Dipped:
+                HeadLights[0] = HeadLights[13] = ColLoBeam;
+                HeadLights[1] = HeadLights[12] = ColLoBeam;
+                HeadLights[2] = HeadLights[11] = ColLoBeam;
+                HeadLights[3] = HeadLights[10] = ColLoBeam;
+                HeadLights[4] = HeadLights[9] = ColDRL;
+                HeadLights[5] = HeadLights[8] = ColDRL;
+                HeadLights[6] = HeadLights[7] = ColDRL;
+                break;
+            case High:
+                HeadLights[0] = HeadLights[13] = ColHiBeam;
+                HeadLights[1] = HeadLights[12] = ColHiBeam;
+                HeadLights[2] = HeadLights[11] = ColHiBeam;
+                HeadLights[3] = HeadLights[10] = ColHiBeam;
+                HeadLights[4] = HeadLights[9] = ColDRL;
+                HeadLights[5] = HeadLights[8] = ColDRL;
+                HeadLights[6] = HeadLights[7] = ColDRL;
+                break;
+        }
     }
-
     
 }
 
 void Lights::CyclicUpdateTask()
 {
-    const TickType_t period = pdMS_TO_TICKS(LightsUpdateFreq);
+    const TickType_t periodTicks = pdMS_TO_TICKS(LightsUpdateFreq);
     TickType_t lastWakeTime = xTaskGetTickCount();
     uint32_t blinkPhaseMS = 0;
 
@@ -132,7 +159,7 @@ void Lights::CyclicUpdateTask()
         FastLED.show();
 
         // sleep until next cycle
-        vTaskDelayUntil(&lastWakeTime, period);
-        blinkPhaseMS += period;
+        vTaskDelayUntil(&lastWakeTime, periodTicks);
+        blinkPhaseMS += LightsUpdateFreq;
     }
 }

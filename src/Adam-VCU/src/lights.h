@@ -8,13 +8,14 @@ public:
     static constexpr uint16_t LightsUpdateFreq = 100; // ms
     static constexpr uint32_t BlinkOn = 600; // ms
     static constexpr uint32_t BlinkOff = 400; // ms
-    static constexpr CRGB::HTMLColorCode ColOff = CRGB::Black;
-    static constexpr CRGB::HTMLColorCode ColIndicator = CRGB::Red;
-    static constexpr CRGB::HTMLColorCode ColDRL = CRGB::Gray10;
-    static constexpr CRGB::HTMLColorCode ColLoBeam = CRGB::Gray50;
-    static constexpr CRGB::HTMLColorCode ColHiBeam = CRGB::Gray75;
-    static constexpr CRGB::HTMLColorCode ColTail = CRGB::Red4;
-    static constexpr CRGB::HTMLColorCode ColBrake = CRGB::Red2;
+    static constexpr CRGB ColOff = CRGB::Black;
+    static constexpr CRGB ColIndicator = 0x773300;
+    static constexpr CRGB ColDRL = 0x101010;
+    static constexpr CRGB ColLoBeam = 0x303030;
+    static constexpr CRGB ColHiBeam = 0x888888;
+    static constexpr CRGB ColTail = 0x330000;
+    static constexpr CRGB ColBrake = 0x990000;
+    static constexpr CRGB ColOTA = 0x550055;
 
     enum HeadLightState {
         Off = 0,
@@ -37,6 +38,8 @@ public:
     void SetReverseLight(bool onOff);
     void SetIndicators(bool FR, bool FL, bool RR, bool RL);
     void SetIndicator(IndicatorPosition pos, bool newState);
+    void SetOTA(bool onOff);
+    void SetOTAprogress(uint8_t percent);
 
 protected:
     CRGB HeadLights[HWConfig::Sizes::LEDs::NumHeadlights];
@@ -48,6 +51,8 @@ protected:
     bool stTaillight = false;
     bool stBrakeLight = false;
     bool stReverseLight = false;
+    bool stOTA = false;
+    uint8_t OTAprogress = 0;
 
     bool internalBlinkPhase = false;
 

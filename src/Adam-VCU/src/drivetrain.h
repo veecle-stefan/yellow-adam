@@ -8,14 +8,16 @@
 class DriveTrain
 {
 public:
-    DriveTrain(RCinput* input, Axle& axleF, Axle& axleR, Lights& lights);
+    DriveTrain(Axle& axleF, Axle& axleR, Lights& lights);
 
     // Control task period in milliseconds
     static constexpr uint16_t ControlPeriodMs = 20; // 20 ms / 50 Hz
     static constexpr uint16_t BrakeDecelThreshold = 200; 
 
 protected:
-    RCinput* input;
+    RCPWMinput ch1;
+    RCPWMinput ch2;
+    RCPWMinput ch3;
     Axle&  axleF;   // front axle: left/right motors
     Axle&  axleR;   // rear axle: left/right motors
     Lights& lights; // currently unused here, but kept
@@ -39,6 +41,7 @@ protected:
                         Axle::MotorStates currR,
                         Axle::MotorStates lastF,
                         Axle::MotorStates lastR,
+                        bool failSafe,
                         uint32_t currTime
                         );
     bool UpdateLights(Axle::MotorStates fr, Axle::MotorStates rr, int16_t accellerate);
