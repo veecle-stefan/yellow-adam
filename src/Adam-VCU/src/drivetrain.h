@@ -14,6 +14,13 @@ public:
     static constexpr uint16_t ControlPeriodMs = 20; // 20 ms / 50 Hz
     static constexpr uint16_t BrakeDecelThreshold = 200; 
 
+    std::optional<int16_t> val_accell;
+    std::optional<int16_t> val_steer;
+    std::optional<int16_t> val_aux;
+    Axle::MotorStates lastFrontFb;
+    Axle::MotorStates lastRearFb;
+    int16_t sentTorqueFL = 0, sentTorqueFR = 0, sentTorqueRL = 0, sentTorqueRR = 0;
+
 protected:
     RCPWMinput ch1;
     RCPWMinput ch2;
@@ -21,8 +28,7 @@ protected:
     Axle&  axleF;   // front axle: left/right motors
     Axle&  axleR;   // rear axle: left/right motors
     Lights& lights; // currently unused here, but kept
-    Axle::MotorStates lastFrontFb;
-    Axle::MotorStates lastRearFb;
+    
 
     // ----- Background control task -----
     void ControlTask();

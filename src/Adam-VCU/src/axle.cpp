@@ -132,7 +132,8 @@ uint8_t Axle::ProcessFeedbackFrame(uint8_t* buffer, size_t len)
             packet.speedL_meas ^
             packet.batVoltage ^
             packet.boardTemp ^
-            packet.cmdLed
+            packet.currL_meas ^
+            packet.currR_meas
         );
 
         if (packet.start == StartFrame && checksum == packet.checksum) {

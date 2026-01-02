@@ -25,7 +25,8 @@ public:
         int16_t  speedL_meas;
         int16_t  batVoltage;
         int16_t  boardTemp;
-        uint16_t cmdLed;
+        int16_t  currR_meas;
+        int16_t  currL_meas;
         uint16_t checksum;
     } __attribute__((packed));
 

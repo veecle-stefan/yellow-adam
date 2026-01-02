@@ -63,13 +63,13 @@ void DriveTrain::ControlTask()
         uint32_t currTime = millis();
 
         // 1. Read input channels
-        std::optional<int16_t> val_accell = *ch1;
-        std::optional<int16_t> val_steer  = *ch3;
-        std::optional<int16_t> val_aux    = *ch2;
+        val_accell = *ch1;
+        val_steer  = *ch3;
+        val_aux    = *ch2;
 
         // 2. Get motor status (from last update)
-        auto currFront = axleF.GetLatestFeedback(currTime);   // optional<HistoryFrame>
-        auto currRear  = axleR.GetLatestFeedback(currTime);
+        Axle::MotorStates currFront = axleF.GetLatestFeedback(currTime);   // optional<HistoryFrame>
+        Axle::MotorStates currRear  = axleR.GetLatestFeedback(currTime);
 
         int16_t accellerate = 0; // safe defaults
         int16_t steering = 0;
@@ -80,6 +80,7 @@ void DriveTrain::ControlTask()
             steering = *val_steer;
             aux = *val_aux;
             if (failSafe) {
+                lights.SetHeadlight(Lights::HeadLightState::DRL);
                 lights.SetIndicators(false, false, false, false);
             }
             failSafe = false;
@@ -90,20 +91,30 @@ void DriveTrain::ControlTask()
             }
         } else {
             if (!failSafe) {
+                lights.SetHeadlight(Lights::HeadLightState::Off);
                 lights.SetIndicators(true, true, true, true); // hazards to show no data
             }
             failSafe = true;
         }
 
         // 3. Run torque vectoring
-        int16_t fl = 0, fr = 0, rl = 0, rr = 0;
-        TorqueVectoring(accellerate, steering, fl, fr, rl, rr, currFront, currRear, this->lastFrontFb, this->lastRearFb, failSafe, currTime);
+        TorqueVectoring(accellerate, steering, sentTorqueFL, sentTorqueFR, sentTorqueRL, sentTorqueRR, currFront, currRear, this->lastFrontFb, this->lastRearFb, failSafe, currTime);
         this->lastFrontFb = currFront;
         this->lastRearFb = currRear;
 
+        //FIXME: temporary to test only rear motors
+        if(aux > 500) {
+            sentTorqueFL = 0;
+            sentTorqueRL = 0;
+        } else {
+            sentTorqueFR = 0;
+            sentTorqueRR = 0;
+        }
+        
+
         // 3. Update all 4 motors via the two axles
-        axleF.Send(fl, fr); // front left/right
-        axleR.Send(rl, rr); // rear left/right
+        axleF.Send(sentTorqueFL, sentTorqueFR); // front left/right
+        axleR.Send(sentTorqueRL, sentTorqueRR); // rear left/right
 
         //4. Update Lights based on throttle, speed etc.
         UpdateLights(currFront, currRear, accellerate);

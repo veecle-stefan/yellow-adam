@@ -2,6 +2,8 @@
 #include <ArduinoOTA.h>
 #include <WiFi.h>
 #include "drivetrain.h"
+#include "captiveportal.h"
+#include "statusJSON.h"
 
 Axle axleF(UART_NUM_1, HWConfig::Pins::UART::Front::RX, HWConfig::Pins::UART::Front::TX);
 Axle axleR(UART_NUM_2, HWConfig::Pins::UART::Rear::RX, HWConfig::Pins::UART::Rear::TX);
@@ -10,6 +12,10 @@ DriveTrain* drive = NULL;
 
 static const char* AP_SSID = "Adam";
 static const char* AP_PASS = "opeladam2026"; // >= 8 chars recommended
+static const char* hostname = "adam";
+CaptivePortalWeb portal;
+static CarStatus st;
+static char json[256];
 
 // Example "other code" that must keep running
 static uint32_t lastBlinkMs = 0;
@@ -37,7 +43,7 @@ static void setupWiFiAP()
 static void setupOTA()
 {
   // The hostname shows up in the Arduino IDE / platformio-ota list
-  ArduinoOTA.setHostname("adam-vcu");
+  ArduinoOTA.setHostname(hostname);
 
   // Optional: set a password for OTA updates
   // ArduinoOTA.setPassword("ota-pass");
@@ -70,6 +76,14 @@ static void setupOTA()
 
   ArduinoOTA.begin();
   Serial.println("[OTA] Ready (AP mode)");
+
+  portal.onWsMessage([](const String& msg){
+    // Minimal: just echo
+    // You’ll parse JSON here later and map to inputs/actions
+    Serial.printf("[APP] got: %s\n", msg.c_str());
+  });
+  IPAddress apIp = WiFi.softAPIP();
+  portal.begin(apIp, hostname);
 }
 
 
@@ -87,6 +101,39 @@ void loop() {
   // put your main code here, to run repeatedly:
   delay(10); // nothing to be done, all in background threads
   ArduinoOTA.handle();
+
+  portal.loop();
+
+  // Example: broadcast status occasionally
+  static uint32_t last = 0;
+  uint32_t currTime = millis();
+  if (currTime - last > 100) {
+    last = currTime;
+
+    if (drive->val_accell.has_value()) st.t = *(drive->val_accell);
+    if (drive->val_steer.has_value()) st.s = *(drive->val_steer);
+    st.tq_fl = drive->sentTorqueFL;
+    st.tq_fr = drive->sentTorqueFR;
+    st.tq_rl = drive->sentTorqueRL;
+    st.tq_rr = drive->sentTorqueRR;
+    Axle::MotorStates front = drive->lastFrontFb;
+    Axle::MotorStates rear = drive->lastRearFb;
+    if (front.has_value()) {
+      st.curr_fl = front->sample.speedL_meas;
+      st.curr_fr = front->sample.speedR_meas;
+    }
+    if (rear.has_value()) {
+      //st.curr_rl = rear->sample.currL_meas;
+      //st.curr_rr = rear->sample.currR_meas;
+      st.curr_rl = rear->sample.speedL_meas;
+      st.curr_rr = rear->sample.speedR_meas;
+    }
+
+    size_t n = EncodeStatusJson(st, json, sizeof(json));
+    if (n > 0) {
+      portal.broadcastText(json);
+    }
+  }
 
 }
 

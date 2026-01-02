@@ -81,18 +81,15 @@ bool IRAM_ATTR RCPWMinput::on_rx_done(const rmt_rx_done_event_data_t *edata) {
 
 int16_t RCPWMinput::mapRange(uint16_t timeUs)
 {
-    // Map 1000–2000 µs to -1000 to 1000
-    const int16_t MIN_US = 1000;
-    const int16_t MAX_US = 2000;
-    const int16_t MID_US = (MIN_US + MAX_US) / 2;
-    const int16_t OUTPUT_RANGE = 1000;
-
     int16_t value = static_cast<int16_t>(timeUs) - MID_US;
     value = (value * OUTPUT_RANGE) / (MAX_US - MID_US);
 
     // Clamp to [-1000, 1000]
     if (value > OUTPUT_RANGE) value = OUTPUT_RANGE;
     if (value < -OUTPUT_RANGE) value = -OUTPUT_RANGE;
+    // apply deadband
+    if ((value >= 0) && (value < DEADBAND)) value = 0;
+    if ((value <= 0) && (value > -DEADBAND)) value = 0;
 
     return value;
 }

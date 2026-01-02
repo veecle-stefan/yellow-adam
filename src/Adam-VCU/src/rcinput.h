@@ -5,6 +5,13 @@
 
 class RCPWMinput {
 public:
+  // Map 1000–2000 µs to -1000 to 1000
+    static constexpr int16_t MIN_US = 1000;
+    static constexpr int16_t MAX_US = 2000;
+    static constexpr int16_t MID_US = (MIN_US + MAX_US) / 2;
+    static constexpr int16_t OUTPUT_RANGE = 1000;
+    static constexpr int16_t DEADBAND = 50;
+
     // pin = GPIO_NUM_x (not int!), expects classic RC PWM 1000–2000 µs @ ~50 Hz
     explicit RCPWMinput(gpio_num_t pin);
 

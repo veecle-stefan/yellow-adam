@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Car</title>
+  <style>
+    :root{
+      --bg:#0b0c10; --fg:#e9ecf1; --muted:#8a93a6; --line:#20263a;
+      --barbg:#141a2b;
+      --fillWs:#3b82f6;   /* normal (WS) */
+      --fillLocal:#22c55e;/* manual override (local joystick) */
+      --car:#151a28; --wheel:#000;
+    }
+    *{ box-sizing:border-box; }
+    body{ margin:0; padding:12px; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+          background:var(--bg); color:var(--fg); }
+    .wrap{ max-width:420px; margin:0 auto; display:flex; flex-direction:column; gap:12px; }
+
+    /* ---- Inputs (T + S side by side) ---- */
+    .inputs{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .ibox{ border:1px solid var(--line); border-radius:14px; padding:10px; background:rgba(255,255,255,0.02); }
+    .ihead{ display:flex; align-items:baseline; justify-content:space-between; margin-bottom:8px; }
+    .tag{ font-weight:900; color:var(--muted); letter-spacing:0.02em; }
+    .num{ font-variant-numeric:tabular-nums; font-weight:900; }
+
+    /* centered tiny horizontal bar */
+    .hbar{
+      position:relative; height:12px; background:var(--barbg);
+      border:1px solid var(--line); border-radius:999px; overflow:hidden;
+    }
+    .hbar .mid{ position:absolute; left:50%; top:0; bottom:0; width:2px; background:#2a3350; transform:translateX(-1px); }
+    .hbar .neg,.hbar .pos{ position:absolute; top:0; bottom:0; background:var(--fillWs); }
+    .hbar .neg{ right:50%; width:0%; }
+    .hbar .pos{ left:50%; width:0%; }
+
+    /* Manual override: color bars green + subtle glow */
+    body.manual .hbar .neg,
+    body.manual .hbar .pos{
+      background:var(--fillLocal);
+      box-shadow: 0 0 10px rgba(34,197,94,0.25);
+    }
+
+    /* ---- Car (vertical) ---- */
+    .carbox{ display:flex; justify-content:center; }
+    .car{
+      position:relative;
+      width:240px;
+      height:380px;
+      background:var(--car);
+      border:1px solid var(--line);
+      border-radius:18px;
+
+      /* critical: don’t scroll page while controlling */
+      touch-action:none;
+      user-select:none;
+    }
+
+    /* optional hint text */
+    .hint{
+      position:absolute; left:0; right:0; top:50%;
+      transform:translateY(-50%);
+      text-align:center;
+      color:rgba(138,147,166,0.6);
+      font-size:12px;
+      font-weight:800;
+      pointer-events:none;
+    }
+    body.manual .hint{ display:none; }
+
+    /* Wheels are vertical blocks; each contains a vertical centered bar */
+    .wheel{
+      position:absolute;
+      width:30px; height:90px;
+      background:var(--wheel);
+      border-radius:12px;
+      padding:5px;
+      display:flex; align-items:center; justify-content:center;
+    }
+    .wheel.fl{ left:-14px; top:78px; }
+    .wheel.fr{ right:-14px; top:78px; }
+    .wheel.rl{ left:-14px; bottom:78px; }
+    .wheel.rr{ right:-14px; bottom:78px; }
+    /* current value next to each wheel */
+    .wcurr{
+      position:absolute;
+      top:50%;
+      transform:translateY(-50%);
+      font-size:11px;
+      font-weight:900;
+      color:var(--muted);
+      font-variant-numeric:tabular-nums;
+      line-height:1;
+      user-select:none;
+    }
+    .wheel.fl .wcurr, .wheel.rl .wcurr { left: 36px; }  /* show on the inside */
+    .wheel.fr .wcurr, .wheel.rr .wcurr { right: 36px; text-align:right; }
+
+    /* centered vertical bar: negative down, positive up */
+    .vbar{
+      position:relative;
+      width:10px; height:100%;
+      background:#0f1322;
+      border:1px solid #1c2236;
+      border-radius:999px;
+      overflow:hidden;
+    }
+    .vbar .mid{ position:absolute; left:0; right:0; top:50%; height:2px; background:#2a3350; transform:translateY(-1px); }
+    .vbar .pos,.vbar .neg{ position:absolute; left:0; right:0; background:var(--fillWs); }
+    .vbar .pos{ bottom:50%; height:0%; }
+    .vbar .neg{ top:50%; height:0%; }
+
+    /* ---- Buttons ---- */
+    .btns{ display:grid; grid-template-columns: repeat(5, 1fr); gap:8px; }
+    button{
+      appearance:none; border:1px solid var(--line); background:transparent; color:var(--fg);
+      border-radius:12px; padding:10px 0; font-size:18px; font-weight:800;
+      cursor:pointer;
+    }
+    button.on{ border-color:rgba(59,130,246,.6); background:rgba(59,130,246,.15); }
+
+    /* ---- small footer ---- */
+    .foot{ color:var(--muted); font-size:12px; display:flex; justify-content:space-between; }
+    .pill{ padding:2px 8px; border:1px solid var(--line); border-radius:999px; }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+
+    <div class="inputs">
+      <div class="ibox">
+        <div class="ihead"><div class="tag">T</div><div class="num" id="val_throttle">0</div></div>
+        <div class="hbar" data-min="-1000" data-max="1000" data-id="throttle">
+          <div class="neg"></div><div class="pos"></div><div class="mid"></div>
+        </div>
+      </div>
+
+      <div class="ibox">
+        <div class="ihead"><div class="tag">S</div><div class="num" id="val_steering">0</div></div>
+        <div class="hbar" data-min="-1000" data-max="1000" data-id="steering">
+          <div class="neg"></div><div class="pos"></div><div class="mid"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="carbox">
+      <div class="car" id="car">
+        <div class="hint">touch + drag to drive</div>
+
+        <div class="wheel fl">
+          <div class="vbar" data-min="-1000" data-max="1000" data-id="torque_fl">
+            <div class="pos"></div><div class="neg"></div><div class="mid"></div>
+          </div>
+          <div class="wcurr" id="curr_fl">0</div>
+        </div>
+
+        <div class="wheel fr">
+          <div class="vbar" data-min="-1000" data-max="1000" data-id="torque_fr">
+            <div class="pos"></div><div class="neg"></div><div class="mid"></div>
+          </div>
+          <div class="wcurr" id="curr_fr">0</div>
+        </div>
+
+        <div class="wheel rl">
+          <div class="vbar" data-min="-1000" data-max="1000" data-id="torque_rl">
+            <div class="pos"></div><div class="neg"></div><div class="mid"></div>
+          </div>
+          <div class="wcurr" id="curr_rl">0</div>
+        </div>
+
+        <div class="wheel rr">
+          <div class="vbar" data-min="-1000" data-max="1000" data-id="torque_rr">
+            <div class="pos"></div><div class="neg"></div><div class="mid"></div>
+          </div>
+          <div class="wcurr" id="curr_rr">0</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="btns">
+      <button id="btn_drl"   type="button" title="DRL">🌤️</button>
+      <button id="btn_low"   type="button" title="Low">💡</button>
+      <button id="btn_high"  type="button" title="High">🔦</button>
+      <button id="btn_ind_l" type="button" title="Left">⬅️</button>
+      <button id="btn_ind_r" type="button" title="Right">➡️</button>
+    </div>
+
+    <div class="foot">
+      <div class="pill" id="ws_state">ws: …</div>
+      <div class="pill" id="mode_state">mode: ws</div>
+    </div>
+
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
