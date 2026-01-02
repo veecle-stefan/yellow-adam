@@ -8,11 +8,18 @@ class Axle
 {
 
 public:
+    enum RemoteCommand : uint8_t {
+      CmdNOP = 0,
+      CmdBeep = 1,
+      CmdPowerOff = 2
+    };
+
     struct SerialCommand 
     {
         uint16_t start;
         int16_t  steer;
         int16_t  speed;
+        uint8_t  cmd;
         uint16_t checksum;
     } __attribute__((packed));
 
@@ -48,6 +55,7 @@ public:
     struct MotorCommand {
         int16_t motL;
         int16_t motR;
+        RemoteCommand func = RemoteCommand::CmdNOP;
     };
 
     static constexpr unsigned long HoverSerialBaud = 115200;
@@ -57,7 +65,7 @@ public:
     
 
     Axle(uart_port_t hwSerialNum, uint8_t pinRX, uint8_t pinTX);
-    bool Send(int16_t motL, int16_t motR);
+    bool Send(int16_t motL, int16_t motR, RemoteCommand func = CmdNOP);
     bool WaitForFeedback(HistoryFrame& out, TickType_t timeout);
     MotorStates GetLatestFeedback();
     MotorStates GetLatestFeedback(uint32_t currTime);
@@ -74,5 +82,5 @@ protected:
     uint8_t ProcessFeedbackFrame(uint8_t* buffer, size_t len);
     bool PushFeedback(const SerialFeedback& fb);
     void ReadTask();
-    void SendInternal(int16_t motL, int16_t motR);
+    void SendInternal(int16_t motL, int16_t motR, RemoteCommand remoteCmd);
 };

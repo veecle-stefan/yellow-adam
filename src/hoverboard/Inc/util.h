@@ -35,12 +35,18 @@
       uint8_t  checksumh;
     } SerialCommand;
   #else
+    typedef enum {
+      CmdNOP = 0,
+      CmdBeep = 1,
+      CmdPowerOff = 2
+    } RemoteCommand;
     typedef struct{
       uint16_t  start;
       int16_t   steer;
       int16_t   speed;
+      uint8_t   cmd;
       uint16_t  checksum;
-    } SerialCommand;
+    } __attribute__((packed)) SerialCommand;
   #endif
 #endif
 #if defined(SIDEBOARD_SERIAL_USART2) || defined(SIDEBOARD_SERIAL_USART3)

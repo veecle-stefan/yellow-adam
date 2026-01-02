@@ -29,11 +29,13 @@ size_t EncodeStatusJson(const CarStatus& st, char* outBuf, size_t outSize)
       ",\"t\":%d,\"s\":%d"
       ",\"torque\":{\"fl\":%d,\"fr\":%d,\"rl\":%d,\"rr\":%d}"
       ",\"curr\":{\"fl\":%d,\"fr\":%d,\"rl\":%d,\"rr\":%d}"
+      ",\"boards\":{\"vf\":%u,\"vr\":%u,\"tf\":%u,\"tr\":%u}"
       ",\"lights\":{\"drl\":%s,\"low\":%s,\"high\":%s,\"il\":%s,\"ir\":%s}"
       "}",
       (int)st.t, (int)st.s,
       (int)st.tq_fl, (int)st.tq_fr, (int)st.tq_rl, (int)st.tq_rr,
       (int)st.curr_fl, (int)st.curr_fr, (int)st.curr_rl, (int)st.curr_rr,
+      (unsigned int)st.voltage_front, (unsigned int)st.voltage_rear, (unsigned int)st.temp_front, (unsigned int)st.temp_rear,
       jb(st.drl), jb(st.low), jb(st.high), jb(st.il), jb(st.ir)
     );
 

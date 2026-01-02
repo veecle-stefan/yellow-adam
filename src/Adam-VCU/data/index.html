@@ -96,6 +96,54 @@
     .wheel.fl .wcurr, .wheel.rl .wcurr { left: 36px; }  /* show on the inside */
     .wheel.fr .wcurr, .wheel.rr .wcurr { right: 36px; text-align:right; }
 
+    /* ECU status pill – centered on axle */
+    .ecustat.axle{
+      position:absolute;
+      left:50%;
+      transform:translateX(-50%);
+      display:flex;
+      gap:8px;
+
+      padding:3px 10px;
+      border:1px solid var(--line);
+      border-radius:999px;
+      background:rgba(0,0,0,0.28);
+
+      font-size:11px;
+      font-weight:900;
+      font-variant-numeric:tabular-nums;
+      color:var(--muted);
+      user-select:none;
+      white-space:nowrap;
+    }
+
+    /* Axle positions (match wheel Y offsets) */
+    .ecustat.axle.front{ top: 64px; }
+    .ecustat.axle.rear { bottom: 64px; }
+
+    /* Optional: visually separate voltage / temperature */
+    .ecustat.axle span{
+      padding:0 4px;
+    }
+
+    /* FRONT / REAR labels inside the car */
+    .label{
+      position:absolute;
+      left:0;
+      right:0;
+      text-align:center;
+
+      font-size:11px;
+      font-weight:800;
+      letter-spacing:0.04em;
+      color:var(--muted);
+
+      user-select:none;
+      pointer-events:none;
+    }
+
+    .label.front{ top:8px; }
+    .label.rear { bottom:8px; }
     /* centered vertical bar: negative down, positive up */
     .vbar{
       position:relative;
@@ -147,7 +195,12 @@
     <div class="carbox">
       <div class="car" id="car">
         <div class="hint">touch + drag to drive</div>
-
+         <!-- Front axle ECU status -->
+        <div class="label front">FRONT</div>
+        <div class="ecustat axle front">
+          <span id="volt_front">0.0 V</span>
+          <span id="temp_front">0 °C</span>
+        </div>
         <div class="wheel fl">
           <div class="vbar" data-min="-1000" data-max="1000" data-id="torque_fl">
             <div class="pos"></div><div class="neg"></div><div class="mid"></div>
@@ -162,6 +215,13 @@
           <div class="wcurr" id="curr_fr">0</div>
         </div>
 
+        <div class="label rear">REAR</div>
+
+        <!-- Rear axle ECU status -->
+        <div class="ecustat axle rear">
+          <span id="volt_rear">0.0 V</span>
+          <span id="temp_rear">0 °C</span>
+        </div>
         <div class="wheel rl">
           <div class="vbar" data-min="-1000" data-max="1000" data-id="torque_rl">
             <div class="pos"></div><div class="neg"></div><div class="mid"></div>

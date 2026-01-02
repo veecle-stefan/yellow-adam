@@ -124,6 +124,10 @@ function connectWs(){
     setWheelCurr("rl", cu.rl ?? 0);
     setWheelCurr("rr", cu.rr ?? 0);
 
+    const boards = msg.boards || {};
+    setBoardStat("front", boards.vf, boards.tf);
+    setBoardStat("rear", boards.vr, boards.tr);
+
     // Lights (optional)
     const L = msg.lights || {};
     setBtn("btn_drl",   !!L.drl);
@@ -229,6 +233,13 @@ function stopManual(){
 function setWheelCurr(id, v){
   const el = document.getElementById("curr_" + id);
   if(el) el.textContent = String(v | 0);
+}
+
+function setBoardStat(id, volts, tempC){
+  const elV = document.getElementById("volt_" + id);
+  const elT = document.getElementById("temp_" + id);
+  if(elV) elV.textContent = String((volts / 100).toFixed(2) | 0) + ' V';
+  if(elT) elT.textContent = String((tempC / 10).toFixed(1) | 0) + ' ºC';
 }
 
 // Start manual mode when pressing on the car

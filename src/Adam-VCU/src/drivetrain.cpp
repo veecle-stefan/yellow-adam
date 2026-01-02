@@ -58,6 +58,8 @@ void DriveTrain::ControlTask()
     char rcinputdebug[30];
     uint32_t lastUpdate = 0;
     bool failSafe = false;
+    Axle::RemoteCommand command = Axle::RemoteCommand::CmdNOP;
+    uint32_t lastBeep = 0;
 
     for (;;) {
         uint32_t currTime = millis();
@@ -70,6 +72,16 @@ void DriveTrain::ControlTask()
         // 2. Get motor status (from last update)
         Axle::MotorStates currFront = axleF.GetLatestFeedback(currTime);   // optional<HistoryFrame>
         Axle::MotorStates currRear  = axleR.GetLatestFeedback(currTime);
+
+        // decide what to do with motors based on last feedback
+        if (currFront.has_value()) {
+            if  ((currFront->sample.batVoltage < 2500) && (currTime - lastBeep > 1000)) {
+                command = Axle::RemoteCommand::CmdPowerOff;
+                lastBeep = currTime;
+            } else if (currFront->sample.batVoltage < 2800) {
+                command = Axle::RemoteCommand::CmdBeep;
+            }
+        }
 
         int16_t accellerate = 0; // safe defaults
         int16_t steering = 0;
@@ -102,19 +114,9 @@ void DriveTrain::ControlTask()
         this->lastFrontFb = currFront;
         this->lastRearFb = currRear;
 
-        //FIXME: temporary to test only rear motors
-        if(aux > 500) {
-            sentTorqueFL = 0;
-            sentTorqueRL = 0;
-        } else {
-            sentTorqueFR = 0;
-            sentTorqueRR = 0;
-        }
-        
-
         // 3. Update all 4 motors via the two axles
-        axleF.Send(sentTorqueFL, sentTorqueFR); // front left/right
-        axleR.Send(sentTorqueRL, sentTorqueRR); // rear left/right
+        axleF.Send(sentTorqueFL, sentTorqueFR, command); // front left/right
+        axleR.Send(sentTorqueRL, sentTorqueRR, command); // rear left/right
 
         //4. Update Lights based on throttle, speed etc.
         UpdateLights(currFront, currRear, accellerate);

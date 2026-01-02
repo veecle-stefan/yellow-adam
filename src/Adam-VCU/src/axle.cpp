@@ -60,13 +60,14 @@ conn(hwSerialNum)
 }
 
 
-void Axle::SendInternal(int16_t motL, int16_t motR)
+void Axle::SendInternal(int16_t motL, int16_t motR, RemoteCommand remoteCmd)
 {
     SerialCommand command;
     // Create command
     command.start    = Axle::StartFrame;
-    command.steer    = (int16_t)motL;
-    command.speed    = (int16_t)motR;
+    command.steer    = motL;
+    command.speed    = motR;
+    command.cmd      = remoteCmd;
     command.checksum = (uint16_t)(command.start ^ command.steer ^ command.speed);
 
     // Write to Serial
@@ -75,9 +76,9 @@ void Axle::SendInternal(int16_t motL, int16_t motR)
 
 
 // Push latest command into size-1 queue
-bool Axle::Send(int16_t motL, int16_t motR)
+bool Axle::Send(int16_t motL, int16_t motR, RemoteCommand func)
 {
-    MotorCommand cmd{motL, motR};
+    MotorCommand cmd{motL, motR, func};
     // Overwrite last command, never blocks
     BaseType_t res = xQueueOverwrite(commandQueue, &cmd);
     return (res == pdPASS);
@@ -191,7 +192,7 @@ void Axle::SendEventHandler()
     for (;;) {
         // Get latest command if available, otherwise keep previous or default
         if (xQueueReceive(commandQueue, &cmd, portMAX_DELAY) == pdTRUE) {
-            SendInternal(cmd.motL, cmd.motR);
+            SendInternal(cmd.motL, cmd.motR, cmd.func);
         }
         
     }

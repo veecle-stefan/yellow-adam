@@ -16,6 +16,11 @@ struct CarStatus {
   int16_t curr_rl = 0;
   int16_t curr_rr = 0;
 
+  uint16_t voltage_front = 0;
+  uint16_t voltage_rear = 0;
+  uint16_t temp_front = 0;
+  uint16_t temp_rear = 0;
+
   bool drl  = false;
   bool low  = false;
   bool high = false;

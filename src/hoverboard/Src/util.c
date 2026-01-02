@@ -1280,6 +1280,15 @@ void usart_process_command(SerialCommand *command_in, SerialCommand *command_out
         #ifdef CONTROL_SERIAL_USART2
         timeoutFlgSerial_L = 0;         // Clear timeout flag
         timeoutCntSerial_L = 0;         // Reset timeout counter
+        // check command
+        switch (command_out->cmd) {
+          case CmdBeep:
+            beepCount(1, 24, 1);
+            break;
+          case CmdPowerOff:
+            poweroff();
+            break;
+        }
         #endif
       } else if (usart_idx == 3) {      // Sideboard USART3
         #ifdef CONTROL_SERIAL_USART3

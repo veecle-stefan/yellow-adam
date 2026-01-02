@@ -119,14 +119,16 @@ void loop() {
     Axle::MotorStates front = drive->lastFrontFb;
     Axle::MotorStates rear = drive->lastRearFb;
     if (front.has_value()) {
-      st.curr_fl = front->sample.speedL_meas;
-      st.curr_fr = front->sample.speedR_meas;
+      st.curr_fl = front->sample.currL_meas;
+      st.curr_fr = front->sample.currR_meas;
+      st.voltage_front = front->sample.batVoltage;
+      st.temp_front = front->sample.boardTemp;
     }
     if (rear.has_value()) {
-      //st.curr_rl = rear->sample.currL_meas;
-      //st.curr_rr = rear->sample.currR_meas;
-      st.curr_rl = rear->sample.speedL_meas;
-      st.curr_rr = rear->sample.speedR_meas;
+      st.curr_rl = rear->sample.currL_meas;
+      st.curr_rr = rear->sample.currR_meas;
+      st.voltage_rear = rear->sample.batVoltage;
+      st.temp_rear = rear->sample.boardTemp;
     }
 
     size_t n = EncodeStatusJson(st, json, sizeof(json));
