@@ -6,7 +6,7 @@
 //   "type":"status",
 //   "t":123, "s":-45,
 //   "torque":{"fl":100,"fr":90,"rl":110,"rr":95},
-//   "lights":{"drl":1,"low":0,"high":0,"il":0,"ir":1}
+//   "vehicle":{"gear":"R", "low":0,"high":0,"il":0,"ir":1}
 // }
 //
 // Control from browser -> ESP:
@@ -129,8 +129,8 @@ function connectWs(){
     setBoardStat("rear", boards.vr, boards.tr);
 
     // Lights (optional)
-    const L = msg.lights || {};
-    setBtn("btn_drl",   !!L.drl);
+    const L = msg.vehicle || {};
+    setGear("btn_gear",   L.gear);
     setBtn("btn_low",   !!L.low);
     setBtn("btn_high",  !!L.high);
     setBtn("btn_ind_l", !!L.il);
@@ -147,6 +147,12 @@ function setBtn(id, on){
   b.classList.toggle("on", !!on);
 }
 
+function setGear(id, text){
+  const b = document.getElementById(id);
+  if(!b) return;
+  b.textContent(text);
+}
+
 function toggleBtn(id){
   const b = document.getElementById(id);
   if(!b) return false;
@@ -155,7 +161,6 @@ function toggleBtn(id){
 }
 
 // Send minimal commands (you can rename later)
-document.getElementById("btn_drl").onclick   = () => wsSend({type:"cmd", name:"drl",   on: toggleBtn("btn_drl")});
 document.getElementById("btn_low").onclick   = () => wsSend({type:"cmd", name:"low",   on: toggleBtn("btn_low")});
 document.getElementById("btn_high").onclick  = () => wsSend({type:"cmd", name:"high",  on: toggleBtn("btn_high")});
 document.getElementById("btn_ind_l").onclick = () => wsSend({type:"cmd", name:"ind_l", on: toggleBtn("btn_ind_l")});

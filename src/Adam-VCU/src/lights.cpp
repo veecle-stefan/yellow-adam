@@ -98,6 +98,7 @@ void Lights::UpdateLights()
         }
         if (this->stBrakeLight) {
             TailLights[0] = TailLights[HWConfig::Sizes::LEDs::NumTaillights-1] = ColBrake;
+            TailLights[1] = TailLights[HWConfig::Sizes::LEDs::NumTaillights-2] = ColBrake;
         }
 
         // 3. Head lights

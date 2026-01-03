@@ -1,4 +1,4 @@
-#include "StatusJson.h"
+#include "statusJSON.h"
 #include <stdio.h>   // snprintf
 #include <stdarg.h>  // va_list
 
@@ -15,8 +15,9 @@ static bool appendf(char* buf, size_t cap, size_t& used, const char* fmt, ...) {
 }
 
 static const char* jb(bool v) { return v ? "true" : "false"; }
+static const char gearName[] = {'N', 'D', 'R'};
 
-size_t EncodeStatusJson(const CarStatus& st, char* outBuf, size_t outSize)
+size_t EncodeStatusJson(const DriveTrainStatus& st, char* outBuf, size_t outSize)
 {
   if (!outBuf || outSize < 16) return 0;
 
@@ -30,13 +31,13 @@ size_t EncodeStatusJson(const CarStatus& st, char* outBuf, size_t outSize)
       ",\"torque\":{\"fl\":%d,\"fr\":%d,\"rl\":%d,\"rr\":%d}"
       ",\"curr\":{\"fl\":%d,\"fr\":%d,\"rl\":%d,\"rr\":%d}"
       ",\"boards\":{\"vf\":%u,\"vr\":%u,\"tf\":%u,\"tr\":%u}"
-      ",\"lights\":{\"drl\":%s,\"low\":%s,\"high\":%s,\"il\":%s,\"ir\":%s}"
+      ",\"vehicle\":{\"gear\":\"%c\",\"low\":%s,\"high\":%s,\"il\":%s,\"ir\":%s}"
       "}",
-      (int)st.t, (int)st.s,
+      (int)st.throttle, (int)st.steering,
       (int)st.tq_fl, (int)st.tq_fr, (int)st.tq_rl, (int)st.tq_rr,
       (int)st.curr_fl, (int)st.curr_fr, (int)st.curr_rl, (int)st.curr_rr,
       (unsigned int)st.voltage_front, (unsigned int)st.voltage_rear, (unsigned int)st.temp_front, (unsigned int)st.temp_rear,
-      jb(st.drl), jb(st.low), jb(st.high), jb(st.il), jb(st.ir)
+      gearName[st.state.currGear], jb(st.state.loBeam), jb(st.state.hiBeam), jb(st.state.indicatorsL), jb(st.state.indicatorsR)
     );
 
   if (!ok) return 0;

@@ -1,98 +1,146 @@
 #pragma once
 
 #include <Arduino.h>
+#include <optional>
+
 #include "axle.h"
 #include "lights.h"
 #include "rcinput.h"
 
 namespace DriveConfig {
     static constexpr int16_t DeadBand = 50;
-    
+
+    // Brakes / tap logic
     namespace Brakes {
-        static constexpr uint16_t DetectThreshold = 50;
-        static constexpr uint32_t TapTime = 200;
-        static constexpr uint32_t DoubleTapTime = 1000;
-        static constexpr uint16_t AntiReversingSpeed = 100;
+        static constexpr uint16_t DetectThreshold   = 50;    // throttle <= => braking
+        static constexpr uint32_t TapTime           = 200;   // ms
+        static constexpr uint32_t DoubleTapTime     = 1000;  // ms
+        static constexpr uint16_t AntiReversingSpeed = 100;  // speed unit from feedback
     }
-    
+
+    // Safety thresholds (scaled!)
     namespace Controller {
-        static constexpr uint16_t VoltageWarn = 3500; // 35V
-        static constexpr uint16_t VoltageOff  = 3300; // 33V
-        static constexpr uint16_t TempOff     = 500;  // 50 C
+        static constexpr int16_t VoltageOff  = 3300; // 33.00 V
+        static constexpr int16_t VoltageWarn = 3500; // 35.00 V
+        static constexpr int16_t TempOff     = 600;  // 60.0 C
+        static constexpr int16_t TempWarn    = 500;  // 50.0 C
     }
 
     namespace TV { // Torque Vectoring
-
+        static constexpr float SteerTorqueFront = 30.f;
+        static constexpr float SteerTorqueRear = 50.f;
     }
 }
+
+enum Gear {
+    N = 0,
+    D = 1,
+    R = 2
+};
+
+struct VehicleState {
+    bool loBeam = false;
+    bool hiBeam = false;
+    bool hazards = false;
+    bool indicatorsL = false;
+    bool indicatorsR = false;
+    Gear currGear = Gear::N;
+};
+
+struct DriveTrainStatus {
+  uint32_t ts_ms = 0;
+
+  int16_t throttle = 0;
+  int16_t steering = 0;
+  int16_t aux      = 0;
+  bool    userDetected = false;
+
+  // last applied torques
+  int16_t tq_fl = 0, tq_fr = 0, tq_rl = 0, tq_rr = 0;
+
+  // motor feedback (last known good)
+  int16_t curr_fl = 0, curr_fr = 0, curr_rl = 0, curr_rr = 0;
+  uint16_t voltage_front = 0, voltage_rear = 0; // 35.00V => 3500 etc
+  uint16_t temp_front    = 0, temp_rear    = 0; // 50.0C => 500 etc
+  bool haveFront = false;
+  bool haveRear  = false;
+
+  VehicleState state;
+};
 
 class DriveTrain
 {
 public:
-    enum Gear {
-        Forward = 1,
-        Reverse = 2,
-        Neutral = 3
-    };
+    static constexpr uint16_t ControlPeriodMs = 20; // 50 Hz
 
     DriveTrain(Axle& axleF, Axle& axleR, Lights& lights);
-
-    // Control task period in milliseconds
-    static constexpr uint16_t ControlPeriodMs = 20; // 20 ms / 50 Hz
-
-    std::optional<int16_t> val_accell;
-    std::optional<int16_t> val_steer;
-    std::optional<int16_t> val_aux;
-    Axle::MotorStates lastFrontFb;
-    Axle::MotorStates lastRearFb;
-    int16_t sentTorqueFL = 0, sentTorqueFR = 0, sentTorqueRL = 0, sentTorqueRR = 0;
+    bool GetLatestStatus(DriveTrainStatus& out) const;
 
 protected:
+    // ----- Types -----
+    using MotorStates = std::optional<Axle::HistoryFrame>;
+    using UserInput = RCinput::UserInput;
+    
+    struct UserCmd {
+        int16_t throttle = 0;
+        int16_t steering = 0;
+        int16_t aux      = 0;
+        bool    detected = false;
+        bool    doubleTap = false;
+    };
+
+    struct TickContext {
+        uint32_t    nowMs = 0;
+        UserCmd     user{};
+
+        MotorStates currFront;
+        MotorStates currRear;
+        MotorStates lastFront;
+        MotorStates lastRear;
+    };
+
+    struct Torques {
+        int16_t fl = 0, fr = 0, rl = 0, rr = 0;
+    };
+
+    struct TickDecision {
+        Torques torques{};
+        Axle::RemoteCommand cmd = Axle::RemoteCommand::CmdNOP;
+
+        // “Intent” for outputs besides motors
+        bool failSafe = false;
+        bool brakeLight = false;
+        bool reverseLight = false;
+        bool tailLight = false;
+    };
+
+    // ----- Members -----
+    QueueHandle_t statusQueue = nullptr;
     RCinput ch1;
     RCinput ch2;
     RCinput ch3;
-    Axle&  axleF;   // front axle: left/right motors
-    Axle&  axleR;   // rear axle: left/right motors
-    Lights& lights; // currently unused here, but kept
-    Gear currGear;
+    Axle&    axleF;
+    Axle&    axleR;
+    Lights&  lights;
+
+    MotorStates lastFrontFb;
+    MotorStates lastRearFb;
 
     // ----- Background control task -----
     void ControlTask();
 
-    // Very naive torque vectoring:
-    //  - throttle: -1000..+1000 (brake/accel)
-    //  - steering: -1000..+1000 (left/right)
-    // Outputs per-wheel torques in same range.
-    void TorqueVectoring(int16_t throttle,
-                         int16_t steering,
-                         int16_t& frontLeft,
-                         int16_t& frontRight,
-                         int16_t& rearLeft,
-                         int16_t& rearRight,
-                        Axle::MotorStates currF,
-                        Axle::MotorStates currR,
-                        Axle::MotorStates lastF,
-                        Axle::MotorStates lastR,
-                        bool userDetected,
-                        uint32_t currTime
-                        );
-    bool UpdateLights(Axle::MotorStates fr, Axle::MotorStates rr, int16_t accellerate, bool userDetected);
+    // ----- Pipeline -----
+    TickContext  BuildContext(uint32_t nowMs);
+    TickDecision ComputeDecision(const TickContext& ctx, VehicleState& state);
+    void         ApplyDecision(const TickDecision& dec, VehicleState& state);
+    void         CheckGear(const TickContext& ctx, VehicleState& state);
 
-    /// @brief Checks motor controller statuses and detects undervoltage or overtemp and issues emergency commands
-    /// @param front 
-    /// @param rear 
-    /// @return 
-    Axle::RemoteCommand ControllerSafety(Axle::MotorStates front, Axle::MotorStates rear);
+    // ----- Helpers (small, single-purpose) -----
+    void PublishStatus(const TickContext& ctx, const TickDecision& dec, const VehicleState& state);
 
-    /// @brief Tests if user commands are present, not stale and valid. Also detects taps
-    /// @param thr Raw optional PWM input
-    /// @param aux Raw optional PWM input
-    /// @param str Raw optional PWM input
-    /// @param currTime
-    /// @param out_accell 
-    /// @param out_steer 
-    /// @param out_aux 
-    /// @return Whether inputs were valid and user present (not stale)
-    bool ParseUserInput(RCinput::UserInput thr, RCinput::UserInput aux, RCinput::UserInput str, uint32_t currTime, int16_t& out_accell, int16_t& out_steer, int16_t& out_aux, bool& doubleTap);
+    static UserCmd     ReadUserCmd(UserInput ch1, UserInput ch2, UserInput ch3, uint32_t nowMs);
+    static Axle::RemoteCommand ControllerSafety(const TickContext& ctx);
+    static void        ComputeLights(const TickContext& ctx, TickDecision& dec,  VehicleState& state);
 
+    static Torques     TorqueVectoring(const TickContext& ctx, const VehicleState& state); // no out-params
 };

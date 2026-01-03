@@ -14,7 +14,6 @@ static const char* AP_SSID = "Adam";
 static const char* AP_PASS = "opeladam2026"; // >= 8 chars recommended
 static const char* hostname = "adam";
 CaptivePortalWeb portal;
-static CarStatus st;
 static char json[256];
 
 // Example "other code" that must keep running
@@ -110,30 +109,12 @@ void loop() {
   if (currTime - last > 100) {
     last = currTime;
 
-    if (drive->val_accell.has_value()) st.t = *(drive->val_accell);
-    if (drive->val_steer.has_value()) st.s = *(drive->val_steer);
-    st.tq_fl = drive->sentTorqueFL;
-    st.tq_fr = drive->sentTorqueFR;
-    st.tq_rl = drive->sentTorqueRL;
-    st.tq_rr = drive->sentTorqueRR;
-    Axle::MotorStates front = drive->lastFrontFb;
-    Axle::MotorStates rear = drive->lastRearFb;
-    if (front.has_value()) {
-      st.curr_fl = front->sample.currL_meas;
-      st.curr_fr = front->sample.currR_meas;
-      st.voltage_front = front->sample.batVoltage;
-      st.temp_front = front->sample.boardTemp;
-    }
-    if (rear.has_value()) {
-      st.curr_rl = rear->sample.currL_meas;
-      st.curr_rr = rear->sample.currR_meas;
-      st.voltage_rear = rear->sample.batVoltage;
-      st.temp_rear = rear->sample.boardTemp;
-    }
-
-    size_t n = EncodeStatusJson(st, json, sizeof(json));
-    if (n > 0) {
-      portal.broadcastText(json);
+    DriveTrainStatus st;
+    if (drive->GetLatestStatus(st)) {
+      size_t n = EncodeStatusJson(st, json, sizeof(json));
+      if (n > 0) {
+        portal.broadcastText(json);
+      }
     }
   }
 
