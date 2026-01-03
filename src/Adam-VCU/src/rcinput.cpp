@@ -1,9 +1,13 @@
 #include "rcinput.h"
 
-RCPWMinput::RCPWMinput(gpio_num_t pin)
-    : _pin(pin) {}
+RCinput::RCinput(gpio_num_t pin, uint16_t deadBand)
+    : DeadBand(deadBand),
+    _pin(pin) 
+    {
 
-esp_err_t RCPWMinput::begin() {
+    }
+
+esp_err_t RCinput::begin() {
     // 1 MHz resolution: 1 tick = 1 µs
     rmt_rx_channel_config_t cfg = {
         .gpio_num = _pin,
@@ -20,7 +24,7 @@ esp_err_t RCPWMinput::begin() {
     if (err != ESP_OK) return err;
 
     rmt_rx_event_callbacks_t cbs = {
-        .on_recv_done = &RCPWMinput::on_rx_done_static,
+        .on_recv_done = &RCinput::on_rx_done_static,
     };
     err = rmt_rx_register_event_callbacks(_channel, &cbs, this);
     if (err != ESP_OK) return err;
@@ -38,15 +42,15 @@ esp_err_t RCPWMinput::begin() {
                        sizeof(_symbols), &_rx_cfg);
 }
 
-bool IRAM_ATTR RCPWMinput::on_rx_done_static(rmt_channel_handle_t channel,
+bool IRAM_ATTR RCinput::on_rx_done_static(rmt_channel_handle_t channel,
                                            const rmt_rx_done_event_data_t *edata,
                                            void *user_data) {
-    auto *self = static_cast<RCPWMinput *>(user_data);
+    auto *self = static_cast<RCinput *>(user_data);
     self->on_rx_done(edata);
     return false; // no need to yield from ISR
 }
 
-bool IRAM_ATTR RCPWMinput::on_rx_done(const rmt_rx_done_event_data_t *edata) {
+bool IRAM_ATTR RCinput::on_rx_done(const rmt_rx_done_event_data_t *edata) {
     const rmt_symbol_word_t *syms = edata->received_symbols;
 
     // Each symbol has two halves: (duration0, level0) then (duration1, level1)
@@ -79,7 +83,7 @@ bool IRAM_ATTR RCPWMinput::on_rx_done(const rmt_rx_done_event_data_t *edata) {
     return false;
 }
 
-int16_t RCPWMinput::mapRange(uint16_t timeUs)
+int16_t RCinput::mapRange(uint16_t timeUs)
 {
     int16_t value = static_cast<int16_t>(timeUs) - MID_US;
     value = (value * OUTPUT_RANGE) / (MAX_US - MID_US);
@@ -88,13 +92,13 @@ int16_t RCPWMinput::mapRange(uint16_t timeUs)
     if (value > OUTPUT_RANGE) value = OUTPUT_RANGE;
     if (value < -OUTPUT_RANGE) value = -OUTPUT_RANGE;
     // apply deadband
-    if ((value >= 0) && (value < DEADBAND)) value = 0;
-    if ((value <= 0) && (value > -DEADBAND)) value = 0;
+    if ((value >= 0) && (value < DeadBand)) value = 0;
+    if ((value <= 0) && (value > -DeadBand)) value = 0;
 
     return value;
 }
 
-std::optional<int16_t> RCPWMinput::value()
+RCinput::UserInput RCinput::value()
 {
     if (_updateCount > 0 && _updateCount > _lastRead) {
         _lastRead = _updateCount;
@@ -104,7 +108,7 @@ std::optional<int16_t> RCPWMinput::value()
     }
 }
 
-std::optional<int16_t> RCPWMinput::operator*()
+RCinput::UserInput RCinput::operator*()
 {
     return this->value();
 }

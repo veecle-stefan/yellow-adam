@@ -3,24 +3,27 @@
 #include <driver/rmt_rx.h>
 #include <optional>
 
-class RCPWMinput {
+class RCinput {
 public:
+  typedef std::optional<int16_t> UserInput;
+
   // Map 1000–2000 µs to -1000 to 1000
-    static constexpr int16_t MIN_US = 1000;
-    static constexpr int16_t MAX_US = 2000;
-    static constexpr int16_t MID_US = (MIN_US + MAX_US) / 2;
-    static constexpr int16_t OUTPUT_RANGE = 1000;
-    static constexpr int16_t DEADBAND = 50;
+  static constexpr int16_t MIN_US = 1000;
+  static constexpr int16_t MAX_US = 2000;
+  static constexpr int16_t MID_US = (MIN_US + MAX_US) / 2;
+  static constexpr int16_t OUTPUT_RANGE = 1000;
 
-    // pin = GPIO_NUM_x (not int!), expects classic RC PWM 1000–2000 µs @ ~50 Hz
-    explicit RCPWMinput(gpio_num_t pin);
+  uint16_t DeadBand = 0;
 
-    // returns ESP_OK on success
-    esp_err_t begin();
+  // pin = GPIO_NUM_x (not int!), expects classic RC PWM 1000–2000 µs @ ~50 Hz
+  explicit RCinput(gpio_num_t pin, uint16_t deadBand = 0);
 
-    int16_t mapRange(uint16_t timeUs);
-    std::optional<int16_t> value();
-    std::optional<int16_t> operator*();
+  // returns ESP_OK on success
+  esp_err_t begin();
+
+  int16_t mapRange(uint16_t timeUs);
+  UserInput value();
+  UserInput operator*();
 
 private:
     static bool IRAM_ATTR on_rx_done_static(rmt_channel_handle_t channel,

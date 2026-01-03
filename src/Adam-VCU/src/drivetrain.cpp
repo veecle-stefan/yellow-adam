@@ -5,12 +5,13 @@
 // ----- Constructor -----
 
 DriveTrain::DriveTrain(Axle& axleF, Axle& axleR, Lights& lights)
-    : ch1(HWConfig::Pins::PPM::Channel1)
-    , ch2(HWConfig::Pins::PPM::Channel2)
-    , ch3(HWConfig::Pins::PPM::Channel3)
+    : ch1(HWConfig::Pins::PPM::Channel1, DriveConfig::DeadBand)
+    , ch2(HWConfig::Pins::PPM::Channel2, DriveConfig::DeadBand)
+    , ch3(HWConfig::Pins::PPM::Channel3, DriveConfig::DeadBand)
     , axleF(axleF)
     , axleR(axleR)
     , lights(lights)
+    , currGear(Neutral)
 {
 
     ch1.begin();
@@ -32,96 +33,142 @@ DriveTrain::DriveTrain(Axle& axleF, Axle& axleR, Lights& lights)
     );
 }
 
-bool DriveTrain::UpdateLights(Axle::MotorStates fr, Axle::MotorStates rr, int16_t accellerate)
+bool DriveTrain::UpdateLights(Axle::MotorStates fr, Axle::MotorStates rr, int16_t accellerate, bool userDetected)
 {
-    // if going reverse, turn on reverse light
-    if (fr.has_value() && rr.has_value() && !fr->isStale && !rr->isStale &&
-        fr->sample.speedL_meas < 0 && rr->sample.speedR_meas < 0) {
-        lights.SetReverseLight(true);
-        return true;
+    static bool failSafeVisible = false;
+    if (!userDetected) {
+        if (!failSafeVisible) {
+            lights.SetHeadlight(Lights::HeadLightState::Off);
+            lights.SetReverseLight(false);
+            lights.SetBrakeLight(false);
+            lights.SetTailLight(false);
+            lights.SetIndicators(true, true, true, true); // start blinking to indicate failsafe
+            failSafeVisible = true;
+        }
     } else {
-        lights.SetReverseLight(false);
-        return false;
-    }
+        // restore sane state in case fail-safe was on before
+        if (failSafeVisible) {
+            lights.SetHeadlight(Lights::HeadLightState::DRL);
+            lights.SetTailLight(true);
+            lights.SetIndicators(false, false, false, false);
+            failSafeVisible = false;
+        }
 
-    // if decelating, turn on brake light
-    lights.SetBrakeLight(accellerate <= DriveTrain::BrakeDecelThreshold);
-    
+        // from now on, only normal light situations
+        lights.SetReverseLight(currGear == DriveTrain::Gear::Reverse);
+        lights.SetBrakeLight(accellerate <= DriveConfig::Brakes::DetectThreshold);
+    }
+    return true;
+}
+
+Axle::RemoteCommand DriveTrain::ControllerSafety(Axle::MotorStates front, Axle::MotorStates rear)
+{
+    Axle::RemoteCommand cmd = Axle::RemoteCommand::CmdNOP;
+    if (front.has_value() && rear.has_value()) {
+        auto& sFront = front->sample;
+        auto& sRear = rear->sample;
+        // check if voltage is < absolute lowest allowed -> turn off
+        if  ((sFront.batVoltage < DriveConfig::Controller::VoltageOff) || (sRear.batVoltage < DriveConfig::Controller::VoltageOff)) {
+            cmd = Axle::RemoteCommand::CmdPowerOff;
+        // check if temp >= absolute highest allowed
+        } else if ((sFront.boardTemp >= DriveConfig::Controller::TempOff) || (sRear.boardTemp >= DriveConfig::Controller::TempOff)) {
+            cmd = Axle::RemoteCommand::CmdPowerOff;
+        // check if voltage is at critical level -> beep
+        } else if ((sFront.batVoltage < DriveConfig::Controller::VoltageWarn) || (sRear.batVoltage < DriveConfig::Controller::VoltageWarn)) {
+            cmd = Axle::RemoteCommand::CmdBeep;
+        }
+    }
+    return cmd;
+}
+
+bool DriveTrain::ParseUserInput(
+    RCinput::UserInput thr, 
+    RCinput::UserInput aux, 
+    RCinput::UserInput str,
+    uint32_t currTime,
+    int16_t& out_accell, 
+    int16_t& out_steer, 
+    int16_t& out_aux, 
+    bool& doubleTap)
+{
+    static uint32_t firstTap = 0;
+    static uint32_t lastTap = 0;
+    static bool isTapping = false;
+    static uint8_t tapCount = 0;
+    bool userDetected = false;
+    // only if all three RC values are valid and up-to-date
+    if (thr.has_value() && str.has_value() && aux.has_value()) {
+        out_accell = *thr;
+        out_steer = *str;
+        out_aux = *aux;
+
+        // seems valid, now check for taps
+        if (out_accell < DriveConfig::Brakes::DetectThreshold) {
+            // brake pressed -> detect tap
+            if (!isTapping) {
+                // was released -> now pressed
+                isTapping = true;
+                lastTap = currTime;
+                if (tapCount == 0) {
+                    firstTap = lastTap;
+                }
+            }
+        } else if (isTapping) {
+            if (currTime - lastTap < DriveConfig::Brakes::TapTime) {
+                tapCount++;
+                if (currTime - firstTap < DriveConfig::Brakes::DoubleTapTime) {
+                    // valid consecutive tap
+                    if (tapCount == 2) {
+                        doubleTap = true;
+                        tapCount = 0; // reset
+                    }
+                }
+            } else {
+                tapCount = 0; // reset
+            }
+            isTapping = false;
+        }
+
+        userDetected = true;
+    } else {
+        userDetected = false;
+    }
+    return userDetected;
 }
 
 // ----- Periodic control task -----
-
 void DriveTrain::ControlTask()
 {
     const TickType_t period       = pdMS_TO_TICKS(ControlPeriodMs);
     TickType_t       lastWakeTime = xTaskGetTickCount();
-    char rcinputdebug[30];
-    uint32_t lastUpdate = 0;
-    bool failSafe = false;
-    Axle::RemoteCommand command = Axle::RemoteCommand::CmdNOP;
-    uint32_t lastBeep = 0;
 
     for (;;) {
         uint32_t currTime = millis();
-
-        // 1. Read input channels
-        val_accell = *ch1;
-        val_steer  = *ch3;
-        val_aux    = *ch2;
 
         // 2. Get motor status (from last update)
         Axle::MotorStates currFront = axleF.GetLatestFeedback(currTime);   // optional<HistoryFrame>
         Axle::MotorStates currRear  = axleR.GetLatestFeedback(currTime);
 
-        // decide what to do with motors based on last feedback
-        if (currFront.has_value()) {
-            if  ((currFront->sample.batVoltage < 2500) && (currTime - lastBeep > 1000)) {
-                command = Axle::RemoteCommand::CmdPowerOff;
-                lastBeep = currTime;
-            } else if (currFront->sample.batVoltage < 2800) {
-                command = Axle::RemoteCommand::CmdBeep;
-            }
-        }
-
         int16_t accellerate = 0; // safe defaults
         int16_t steering = 0;
         int16_t aux = 0;
-        // only if all three RC values are valid and up-to-date
-        if (val_accell.has_value() && val_steer.has_value() && val_aux.has_value()) {
-            accellerate = *val_accell;
-            steering = *val_steer;
-            aux = *val_aux;
-            if (failSafe) {
-                lights.SetHeadlight(Lights::HeadLightState::DRL);
-                lights.SetIndicators(false, false, false, false);
-            }
-            failSafe = false;
-            if (currTime - lastUpdate > 100) {
-                snprintf(rcinputdebug, 30, "%i;%i;%i", accellerate, steering, aux);
-                Serial.println(rcinputdebug);
-                lastUpdate = currTime;
-            }
-        } else {
-            if (!failSafe) {
-                lights.SetHeadlight(Lights::HeadLightState::Off);
-                lights.SetIndicators(true, true, true, true); // hazards to show no data
-            }
-            failSafe = true;
-        }
+        bool doubleTap = false;
+        bool userDetected = ParseUserInput(*ch1, *ch2, *ch3, currTime, accellerate, steering, aux, doubleTap);
 
         // 3. Run torque vectoring
-        TorqueVectoring(accellerate, steering, sentTorqueFL, sentTorqueFR, sentTorqueRL, sentTorqueRR, currFront, currRear, this->lastFrontFb, this->lastRearFb, failSafe, currTime);
-        this->lastFrontFb = currFront;
-        this->lastRearFb = currRear;
-
-        // 3. Update all 4 motors via the two axles
+        TorqueVectoring(accellerate, steering, sentTorqueFL, sentTorqueFR, sentTorqueRL, sentTorqueRR, currFront, currRear, this->lastFrontFb, this->lastRearFb, userDetected, currTime);
+        
+        // 4. Update all 4 motors via the two axles
+        Axle::RemoteCommand command = ControllerSafety(currFront, currRear);
         axleF.Send(sentTorqueFL, sentTorqueFR, command); // front left/right
         axleR.Send(sentTorqueRL, sentTorqueRR, command); // rear left/right
 
-        //4. Update Lights based on throttle, speed etc.
-        UpdateLights(currFront, currRear, accellerate);
+        //5. Update Lights based on throttle, speed etc.
+        UpdateLights(currFront, currRear, accellerate, userDetected);
 
-        // 4. Wait until next cycle
+        //6. Wait until next cycle
+        this->lastFrontFb = currFront;
+        this->lastRearFb = currRear;
         vTaskDelayUntil(&lastWakeTime, period);
     }
 }
@@ -139,7 +186,7 @@ void DriveTrain::TorqueVectoring(int16_t accellerate,
                             Axle::MotorStates currR,
                             Axle::MotorStates lastF,
                             Axle::MotorStates lastR,
-                            bool failSafe,
+                            bool userDetected,
                             uint32_t currTime
                     )
 {
