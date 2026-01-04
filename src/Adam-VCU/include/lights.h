@@ -14,7 +14,7 @@ public:
     static constexpr CRGB ColLoBeam = 0x303030;
     static constexpr CRGB ColHiBeam = 0x888888;
     static constexpr CRGB ColTail = 0x110000;
-    static constexpr CRGB ColBrake = 0x990000;
+    static constexpr CRGB ColBrake = 0xaa0000;
     static constexpr CRGB ColReverse = 0x119999;
     static constexpr CRGB ColOTA = 0x550055;
 

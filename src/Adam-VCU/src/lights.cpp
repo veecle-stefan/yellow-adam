@@ -100,6 +100,7 @@ void Lights::UpdateLights()
         if (this->stBrakeLight) {
             TailLights[0] = TailLights[HWConfig::Sizes::LEDs::NumTaillights-1] = ColBrake;
             TailLights[1] = TailLights[HWConfig::Sizes::LEDs::NumTaillights-2] = ColBrake;
+            TailLights[2] = TailLights[HWConfig::Sizes::LEDs::NumTaillights-3] = ColBrake;
         }
 
         if (this->stReverseLight) {

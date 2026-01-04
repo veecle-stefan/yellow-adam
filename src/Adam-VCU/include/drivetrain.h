@@ -9,11 +9,12 @@
 
 namespace DriveConfig {
     static constexpr int16_t DeadBand = 50;
+    static constexpr uint32_t MaxUserIdleBeforeShutdown = 600000; // 600s = 10min
 
     // Brakes / tap logic
     namespace Brakes {
         static constexpr uint16_t DetectThreshold   = 50;    // throttle <= => braking
-        static constexpr uint32_t TapTime           = 200;   // ms
+        static constexpr uint32_t TapTime           = 300;   // ms
         static constexpr uint32_t DoubleTapTime     = 1000;  // ms
         static constexpr uint16_t AntiReversingSpeed = 100;  // speed unit from feedback
     }
@@ -38,6 +39,13 @@ namespace DriveConfig {
         static constexpr float SteerTorqueFront = 200.f;
         static constexpr float SteerTorqueRear = 200.f;
         static constexpr float MaxOutputLimit = 400.f;
+
+        // ABS/ASR (very simple slip control)
+        static constexpr float SlipRatio = 0.20f;        // 20% deviation
+        static constexpr float SlipDownFactor = 0.70f;  // multiply when slipping
+        static constexpr float SlipMinScale = 0.25f;    // never go below this
+        static constexpr float SlipRecoverPerTick = 0.1f; // +10% towards 1.0 per tick if no slip
+        static constexpr float SlipSpeedEps = 10.f;     // ignore slip logic below this ref speed (noise)
     }
 }
 
@@ -54,6 +62,7 @@ struct VehicleState {
     bool indicatorsL = false;
     bool indicatorsR = false;
     Gear currGear = Gear::N;
+    uint32_t lastUserInput = 0;
 };
 
 struct DriveTrainStatus {
@@ -97,6 +106,7 @@ protected:
         int16_t steering = 0;
         int16_t aux      = 0;
         bool    detected = false;
+        bool    someInput = false;
         bool    doubleTap = false;
     };
 
@@ -153,7 +163,7 @@ protected:
     void PublishStatus(const TickContext& ctx, const TickDecision& dec, const VehicleState& state);
 
     static UserCmd     ReadUserCmd(UserInput ch1, UserInput ch2, UserInput ch3, uint32_t nowMs);
-    static Axle::RemoteCommand ControllerSafety(const TickContext& ctx);
+    static Axle::RemoteCommand ControllerSafety(const TickContext& ctx, const VehicleState& state);
     static void        ComputeLights(const TickContext& ctx, TickDecision& dec,  VehicleState& state);
 
     static Torques     TorqueVectoring(const TickContext& ctx, const VehicleState& state); // no out-params

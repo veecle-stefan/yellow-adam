@@ -80,6 +80,8 @@ DriveTrain::UserCmd DriveTrain::ReadUserCmd(RCinput::UserInput ch1, RCinput::Use
         u.steering = *ch3;
         u.aux      = *ch2;
         u.detected = true;
+
+        u.someInput = (abs(u.throttle) > DriveConfig::DeadBand) || (abs(u.steering) > DriveConfig::DeadBand);
     }
 
     
@@ -129,10 +131,16 @@ DriveTrain::TickContext DriveTrain::BuildContext(uint32_t nowMs)
     return ctx;
 }
 
-Axle::RemoteCommand DriveTrain::ControllerSafety(const TickContext& ctx)
+Axle::RemoteCommand DriveTrain::ControllerSafety(const TickContext& ctx, const VehicleState& state)
 {
     Axle::RemoteCommand cmd = Axle::RemoteCommand::CmdNOP;
 
+    // 1. Check for global timeout
+    if (ctx.nowMs - state.lastUserInput > DriveConfig::MaxUserIdleBeforeShutdown) {
+        cmd = Axle::RemoteCommand::CmdPowerOff;
+    }
+
+    // 2. Check for motor controller emergency
     if (ctx.currFront && ctx.currRear) {
         const auto& f = ctx.currFront->sample;
         const auto& r = ctx.currRear->sample;
@@ -273,28 +281,21 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, const Ve
 
     // =========================
     // Rear axle: traction + yaw assist (smoothly fades out near standstill / near zero throttle)
-    // - avoids pointless rear actuation at standstill when throttle ~ 0
-    // - uses pair allocation so yaw moment doesn't vanish under saturation
     // =========================
 
-    // Rear speed magnitude estimate
     float vRear = 0.f;
     if (sp_rl && sp_rr) vRear = 0.5f * (static_cast<float>(abs(*sp_rl)) + static_cast<float>(abs(*sp_rr)));
     else if (sp_rl)     vRear = static_cast<float>(abs(*sp_rl));
     else if (sp_rr)     vRear = static_cast<float>(abs(*sp_rr));
     else                vRear = 0.f;
 
-    // Rear common-mode request: average rear base cmd (keeps your anti-reversing logic)
     const float Tc_rear = 0.5f * (baseWheelCmd(sp_rl) + baseWheelCmd(sp_rr));
 
-    // --- Smooth fades (both in [0..1]) ---
-    // 1) speed fade: 0..1 over [RearFadeSpeed0 .. RearFadeSpeed1] (speed units == your speed*_meas units)
     const float v0 = static_cast<float>(DriveConfig::TV::RearFadeSpeed0);
     const float v1 = static_cast<float>(DriveConfig::TV::RearFadeSpeed1);
     float us = (v1 > v0) ? ((vRear - v0) / (v1 - v0)) : 1.f;
     us = clampF(us, 0.f, 1.f);
 
-    // 2) throttle fade: 0..1 over [RearFadeThrottle0 .. RearFadeThrottle1] (fractions of maxT)
     const float thrAbs = (throttle >= 0.f) ? throttle : -throttle;
     const float t0 = static_cast<float>(DriveConfig::TV::RearFadeThrottle0) * maxT;
     const float t1 = static_cast<float>(DriveConfig::TV::RearFadeThrottle1) * maxT;
@@ -303,7 +304,6 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, const Ve
 
     const float fadeRear = us * ut;
 
-    // Differential yaw assist (inner wheel opposes motion)
     float Td_rear = 0.f;
 
     if (absS > 0.001f) {
@@ -313,20 +313,14 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, const Ve
             return sp ? signOf(*sp) : gearSign;
         };
 
-        // Convention: rl = Tc + Td, rr = Tc - Td
         if (s > 0.0f) {
-            // turning right => right is inner => want RR to oppose motion
-            // rr = Tc - Td. Want (-Td) = (-motionSign_rr)*oppMag  => Td = motionSign_rr*oppMag
             Td_rear = motionSign(sp_rr) * oppMag;
         } else {
-            // turning left => left is inner => want RL to oppose motion
-            // rl = Tc + Td. Want (+Td) = (-motionSign_rl)*oppMag  => Td = -motionSign_rl*oppMag
             Td_rear = -motionSign(sp_rl) * oppMag;
         }
 
         Td_rear *= fadeRear;
 
-        // Optional: rate limit rear yaw assist too (often smaller than front, but reuse your constant for now)
         static float lastTdRear = 0.f;
         const float maxTdRearDeltaPerTick = DriveConfig::TV::MaxTorquePerTick * maxT;
         Td_rear = rateLimit(Td_rear, lastTdRear, maxTdRearDeltaPerTick);
@@ -339,33 +333,106 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, const Ve
     // =========================
     // Front axle: steering is an actuator -> preserve differential by reducing common-mode if needed
     // =========================
-    // Common-mode request: average of both front base cmds (keeps your anti-reversing logic per wheel input)
+
     const float Tc_front = 0.5f * (baseWheelCmd(sp_fl) + baseWheelCmd(sp_fr));
 
-    // Speed magnitude estimate for steering gain scheduling (linear interpolation)
     float vFront = 0.f;
     if (sp_fl && sp_fr) vFront = 0.5f * (static_cast<float>(abs(*sp_fl)) + static_cast<float>(abs(*sp_fr)));
     else if (sp_fl)     vFront = static_cast<float>(abs(*sp_fl));
     else if (sp_fr)     vFront = static_cast<float>(abs(*sp_fr));
     else                vFront = 0.f;
 
-    // Gain schedule: k(v) = lerp(kLowSpeed, kHighSpeed, u), u in [0..1] over [0..SteerTorqueHighSpeed]
     float u = vFront / DriveConfig::TV::SteerTorqueHighSpeed;
     u = clampF(u, 0.f, 1.f);
     const float k = lerp(DriveConfig::TV::SteerTorqueLowFactor, DriveConfig::TV::SteerTorqueHighFactor, u);
 
-    // Differential request
     float Td_front = s * static_cast<float>(DriveConfig::TV::SteerTorqueFront) * k;
 
-    // Rate limit steering differential to avoid rack kicks
     static float lastTdFront = 0.f;
     const float maxTdDeltaPerTick = DriveConfig::TV::MaxTorquePerTick * maxT;
     Td_front = rateLimit(Td_front, lastTdFront, maxTdDeltaPerTick);
 
-    // Allocate front pair with steering priority (reduces Tc_front if needed)
     const auto fp = allocate_pair(Tc_front, Td_front);
     float fl = fp.l;
     float fr = fp.r;
+
+    // =========================
+    // ABS/ASR: very simple per-wheel slip limiter (post-mixing, pre-clamp)
+    // =========================
+    // Persistent per-wheel scaling (0..1). Static is OK since you only have one drivetrain.
+    static float slipScale_fl = 1.f, slipScale_fr = 1.f, slipScale_rl = 1.f, slipScale_rr = 1.f;
+
+    auto recover = [&](float& sc) {
+        sc += DriveConfig::TV::SlipRecoverPerTick;
+        if (sc > 1.f) sc = 1.f;
+    };
+
+    // Build a reference speed from available wheels (median-ish via min/max removal for 4 values)
+    // Use ABS speed to avoid sign issues.
+    float v[4];
+    bool  ok[4];
+    v[0] = sp_fl ? static_cast<float>(abs(*sp_fl)) : 0.f; ok[0] = sp_fl.has_value();
+    v[1] = sp_fr ? static_cast<float>(abs(*sp_fr)) : 0.f; ok[1] = sp_fr.has_value();
+    v[2] = sp_rl ? static_cast<float>(abs(*sp_rl)) : 0.f; ok[2] = sp_rl.has_value();
+    v[3] = sp_rr ? static_cast<float>(abs(*sp_rr)) : 0.f; ok[3] = sp_rr.has_value();
+
+    // Compute reference as average of middle values among valid speeds (robust-ish).
+    // If <2 valid speeds, skip slip detection.
+    int n = 0;
+    float tmp[4];
+    for (int i = 0; i < 4; ++i) if (ok[i]) tmp[n++] = v[i];
+
+    float vRef = 0.f;
+    if (n >= 2) {
+        // simple sort (n <= 4)
+        for (int i = 0; i < n; ++i)
+            for (int j = i + 1; j < n; ++j)
+                if (tmp[j] < tmp[i]) { float x = tmp[i]; tmp[i] = tmp[j]; tmp[j] = x; }
+
+        if (n == 2) vRef = 0.5f * (tmp[0] + tmp[1]);
+        else if (n == 3) vRef = tmp[1];
+        else /*n==4*/ vRef = 0.5f * (tmp[1] + tmp[2]);
+    }
+
+    // Default: recover scales every tick (unless we detect slip on that wheel)
+    recover(slipScale_fl);
+    recover(slipScale_fr);
+    recover(slipScale_rl);
+    recover(slipScale_rr);
+
+    auto applySlipLogic = [&](float wheelAbsSpeed, float vRefLocal, float wheelTorqueCmd, float& sc) {
+        if (vRefLocal < DriveConfig::TV::SlipSpeedEps) return; // too slow / too noisy -> do nothing
+
+        const float hi = vRefLocal * (1.f + DriveConfig::TV::SlipRatio);
+        const float lo = vRefLocal * (1.f - DriveConfig::TV::SlipRatio);
+
+        bool slip = false;
+
+        if (wheelTorqueCmd > 0.f) {
+            // ASR: driven wheel spins faster than others under positive torque
+            if (wheelAbsSpeed > hi) slip = true;
+        } else if (wheelTorqueCmd < 0.f) {
+            // ABS: wheel locks (much slower than others) under negative torque
+            if (wheelAbsSpeed < lo) slip = true;
+        }
+
+        if (slip) {
+            sc *= DriveConfig::TV::SlipDownFactor;
+            if (sc < DriveConfig::TV::SlipMinScale) sc = DriveConfig::TV::SlipMinScale;
+        }
+    };
+
+    // Evaluate slip based on *current request* (best you can do without last torque)
+    applySlipLogic(v[0], vRef, fl, slipScale_fl);
+    applySlipLogic(v[1], vRef, fr, slipScale_fr);
+    applySlipLogic(v[2], vRef, rl, slipScale_rl);
+    applySlipLogic(v[3], vRef, rr, slipScale_rr);
+
+    // Apply scaling (reduces both accel and brake magnitudes)
+    fl *= slipScale_fl;
+    fr *= slipScale_fr;
+    rl *= slipScale_rl;
+    rr *= slipScale_rr;
 
     // =========================
     // Final clamp + pack
@@ -377,8 +444,14 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, const Ve
 
     return t;
 }
+
 void DriveTrain::CheckGear(const TickContext& ctx, VehicleState& state)
 {
+    if (!ctx.user.detected) {
+        // reset to neutral
+        state.currGear = Gear::N;
+        return;
+    }
     // check for double-tap on the brake while not moving
     if (ctx.user.doubleTap && ctx.currFront && (ctx.currFront->sample.speedL_meas == 0) && (ctx.currFront->sample.speedR_meas == 0)) {
         if (state.currGear == Gear::D) {
@@ -394,16 +467,21 @@ DriveTrain::TickDecision DriveTrain::ComputeDecision(const TickContext& ctx, Veh
 {
     TickDecision dec{};
 
-    // 0) gear
+    // 1) Update last user input timestamp
+    if (ctx.user.someInput) {
+        state.lastUserInput = ctx.nowMs;
+    }
+
+    // 2) gear
     CheckGear(ctx, state);
 
-    // 1) torques
+    // 3) torques
     dec.torques = TorqueVectoring(ctx, state);
 
-    // 2) safety command
-    dec.cmd = ControllerSafety(ctx);
+    // 4) safety command
+    dec.cmd = ControllerSafety(ctx, state);
 
-    // 3) lights intent
+    // 5) lights intent
     ComputeLights(ctx, dec, state);
 
     return dec;
