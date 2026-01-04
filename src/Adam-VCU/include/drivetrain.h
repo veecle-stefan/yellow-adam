@@ -27,9 +27,13 @@ namespace DriveConfig {
     }
 
     namespace TV { // Torque Vectoring
-        static constexpr float SteerTorqueFront = 90.f;
+        static constexpr float MaxTorquePerTick = 0.3f;
+        static constexpr float SteerTorqueLowFactor = 1.f; // most torque at standstill
+        static constexpr float SteerTorqueHighFactor = 0.6f; // lower torque at speed
+        static constexpr float SteerTorqueHighSpeed = 100.f; // defines 'high speed'
+        static constexpr float SteerTorqueFront = 200.f;
         static constexpr float SteerTorqueRear = 200.f;
-        static constexpr float MaxOutputLimit = 300.f;
+        static constexpr float MaxOutputLimit = 400.f;
     }
 }
 
@@ -114,6 +118,8 @@ protected:
         bool failSafe = false;
         bool brakeLight = false;
         bool reverseLight = false;
+        bool loBeam = false;
+        bool hiBeam = false;
         bool tailLight = false;
     };
 

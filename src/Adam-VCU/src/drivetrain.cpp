@@ -167,6 +167,7 @@ void DriveTrain::ComputeLights(const TickContext& ctx, TickDecision& dec, Vehicl
     dec.failSafe   = false;
     dec.brakeLight = (ctx.user.throttle <= -DriveConfig::Brakes::DetectThreshold);
     dec.tailLight = (state.currGear != Gear::N);
+    dec.loBeam = (state.currGear == Gear::D);
     dec.reverseLight = (state.currGear == Gear::R);
 }
 
@@ -178,8 +179,12 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, const Ve
         return t;
     }
 
-    const float throttle = static_cast<float>(ctx.user.throttle * DriveConfig::TV::MaxOutputLimit / 1000.f); // [-1000..1000]
-    float s = static_cast<float>(ctx.user.steering) / 1000.0f;    // [-1..1]
+    const float maxT = static_cast<float>(DriveConfig::TV::MaxOutputLimit);
+
+    const float throttle =
+        static_cast<float>(ctx.user.throttle) * maxT / 1000.0f; // [-maxT..+maxT]
+
+    float s = static_cast<float>(ctx.user.steering) / 1000.0f;  // [-1..1]
     if (s >  1.0f) s =  1.0f;
     if (s < -1.0f) s = -1.0f;
 
@@ -189,12 +194,10 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, const Ve
     const float gearSign = (state.currGear == Gear::D) ? +1.0f : -1.0f;
 
     // --- CURRENT speed only (do not use last*) ---
-    // If feedback not available: std::nullopt
     auto getSpeed = [](const std::optional<Axle::HistoryFrame>& fb, bool left) -> std::optional<int16_t> {
         if (!fb) return std::nullopt;
 
-        // IMPORTANT: Replace these with your real speed fields.
-        // (You wrote currL_meas, but that usually means current, not speed.)
+        // Replace with your real speed fields.
         return left ? std::optional<int16_t>(fb->sample.speedL_meas)
                     : std::optional<int16_t>(fb->sample.speedR_meas);
     };
@@ -230,27 +233,56 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, const Ve
         return (-motionSign) * bmag * brakeScale(sp);
     };
 
-    float fl = baseWheelCmd(sp_fl);
-    float fr = baseWheelCmd(sp_fr);
+    // --- helpers ---
+    auto clampF = [](float v, float lo, float hi) -> float {
+        if (v < lo) return lo;
+        if (v > hi) return hi;
+        return v;
+    };
+
+    auto clampToI16 = [&](float v) -> int16_t {
+        v = clampF(v, -maxT, +maxT);
+        return static_cast<int16_t>(v);
+    };
+
+    auto lerp = [](float a, float b, float u) -> float { return a + (b - a) * u; };
+
+    struct PairOut { float l; float r; };
+    auto allocate_pair = [&](float Tc, float Td) -> PairOut {
+        // 1) differential cannot exceed max
+        Td = clampF(Td, -maxT, +maxT);
+
+        // 2) common must leave headroom for differential:
+        // need |Tc+Td|<=maxT and |Tc-Td|<=maxT  => Tc in [-maxT+|Td|, +maxT-|Td|]
+        const float head = (Td >= 0.f) ? Td : -Td;
+        const float TcMax = +maxT - head;
+        const float TcMin = -maxT + head;
+        Tc = clampF(Tc, TcMin, TcMax);
+
+        return { Tc + Td, Tc - Td };
+    };
+
+    auto rateLimit = [&](float desired, float& last, float maxDeltaPerTick) -> float {
+        const float delta = desired - last;
+        float limited = desired;
+        if (delta >  maxDeltaPerTick) limited = last + maxDeltaPerTick;
+        if (delta < -maxDeltaPerTick) limited = last - maxDeltaPerTick;
+        last = limited;
+        return limited;
+    };
+
+    // =========================
+    // Rear axle: traction + mild "inner oppose" yaw assist
+    // =========================
     float rl = baseWheelCmd(sp_rl);
     float rr = baseWheelCmd(sp_rr);
 
-    // --- Steering vectoring ALWAYS active, even while braking ---
-    // Front axle: add ± torque pair independent of throttle (steer in place)
-    const float frontDelta = s * DriveConfig::TV::SteerTorqueFront;
-    fl += frontDelta;
-    fr -= frontDelta;
-
-    // Rear axle: oppose inner wheel (brake inner) for turning feel.
-    // keep it active also during braking,
-    // but keep it "opposing motion" so it doesn't accidentally add drive torque.
     if (absS > 0.001f) {
-        const float oppMag = absS * DriveConfig::TV::SteerTorqueRear;
+        const float oppMag = absS * static_cast<float>(DriveConfig::TV::SteerTorqueRear);
 
         auto oppDir = [&](std::optional<int16_t> sp) -> float {
-            // Oppose actual rotation; if unknown, oppose expected gear motion
             const float motionSign = sp ? signOf(*sp) : gearSign;
-            return -motionSign;
+            return -motionSign; // always opposing motion (or expected motion)
         };
 
         if (s > 0.0f) {
@@ -262,16 +294,45 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, const Ve
         }
     }
 
-    auto clamp = [](float v) -> int16_t {
-        if (v >  DriveConfig::TV::MaxOutputLimit) v =  DriveConfig::TV::MaxOutputLimit;
-        if (v < -DriveConfig::TV::MaxOutputLimit) v = -DriveConfig::TV::MaxOutputLimit;
-        return static_cast<int16_t>(v);
-    };
+    // =========================
+    // Front axle: steering is an actuator -> preserve differential by reducing common-mode if needed
+    // =========================
+    // Common-mode request: average of both front base cmds (keeps your anti-reversing logic per wheel input)
+    const float Tc_front = 0.5f * (baseWheelCmd(sp_fl) + baseWheelCmd(sp_fr));
 
-    t.fl = clamp(fl);
-    t.fr = clamp(fr);
-    t.rl = clamp(rl);
-    t.rr = clamp(rr);
+    // Speed magnitude estimate for steering gain scheduling (linear interpolation)
+    float vFront = 0.f;
+    if (sp_fl && sp_fr) vFront = 0.5f * (static_cast<float>(abs(*sp_fl)) + static_cast<float>(abs(*sp_fr)));
+    else if (sp_fl)     vFront = static_cast<float>(abs(*sp_fl));
+    else if (sp_fr)     vFront = static_cast<float>(abs(*sp_fr));
+    else                vFront = 0.f;
+
+    // Gain schedule: k(v) = lerp(kLowSpeed, kHighSpeed, u), u in [0..1] over [v0..v1]
+    float u = vFront / DriveConfig::TV::SteerTorqueHighSpeed;
+    u = clampF(u, 0.f, 1.f);
+    const float k = lerp(DriveConfig::TV::SteerTorqueLowFactor, DriveConfig::TV::SteerTorqueHighFactor, u);
+
+    // Differential request
+    float Td_front = s * static_cast<float>(DriveConfig::TV::SteerTorqueFront) * k;
+
+    // Rate limit steering differential to avoid rack kicks
+    // (Tune maxDeltaPerTick; if you have dt, scale it, otherwise pick a conservative value.)
+    static float lastTdFront = 0.f;
+    const float maxTdDeltaPerTick = DriveConfig::TV::MaxTorquePerTick * maxT; // e.g. 10% of full torque per tick (tune)
+    Td_front = rateLimit(Td_front, lastTdFront, maxTdDeltaPerTick);
+
+    // Allocate front pair with steering priority (reduces Tc_front if needed)
+    const auto fp = allocate_pair(Tc_front, Td_front);
+    float fl = fp.l;
+    float fr = fp.r;
+
+    // =========================
+    // Final clamp + pack
+    // =========================
+    t.fl = clampToI16(fl);
+    t.fr = clampToI16(fr);
+    t.rl = clampToI16(rl);
+    t.rr = clampToI16(rr);
 
     return t;
 }
@@ -336,6 +397,7 @@ void DriveTrain::ApplyDecision(const TickDecision& dec, VehicleState& state)
 
     lights.SetTailLight(dec.tailLight);
     lights.SetBrakeLight(dec.brakeLight);
+    lights.SetHeadlight(dec.hiBeam ? Lights::HeadLightState::High : dec.loBeam ? Lights::HeadLightState::Dipped : Lights::HeadLightState::DRL);
     lights.SetReverseLight(dec.reverseLight);
 }
 
