@@ -28,24 +28,95 @@ namespace DriveConfig {
     }
 
     namespace TV { // Torque Vectoring
+        // Maximum allowed change of steering-related torque per control tick,
+        // expressed as a fraction of MaxOutputLimit.
+        // Limits how fast torque steer / yaw assist can ramp to avoid mechanical shocks.
         static constexpr float MaxTorquePerTick = 0.3f;
-        static constexpr float SteerTorqueLowFactor = 1.f; // most torque at standstill
-        static constexpr float SteerTorqueHighFactor = 0.6f; // lower torque at speed
-        static constexpr float SteerTorqueHighSpeed = 100.f; // defines 'high speed'
+
+        // Front axle steering torque gain at standstill / very low speed.
+        // Used to overcome rack centering spring and static friction.
+        static constexpr float SteerTorqueLowFactor = 1.f;
+
+        // Front axle steering torque gain at higher vehicle speeds.
+        // Reduced on purpose to avoid twitchy steering and oscillations.
+        static constexpr float SteerTorqueHighFactor = 0.5f;
+
+        // Speed at which SteerTorqueHighFactor is fully reached.
+        // Below this, steering gain interpolates linearly between Low and High factors.
+        static constexpr float SteerTorqueHighSpeed = 50.f;
+
+        // Rear axle yaw assist fade-in based on vehicle speed.
+        // Below RearFadeSpeed0: rear yaw assist disabled (standstill / noise region).
         static constexpr float RearFadeSpeed0 = 5.f;
-        static constexpr float RearFadeSpeed1 = 100.f;
+
+        // Above RearFadeSpeed1: rear yaw assist fully enabled.
+        // Between Speed0 and Speed1, effect ramps in linearly.
+        static constexpr float RearFadeSpeed1 = 25.f;
+
+        // Rear axle yaw assist fade-in based on longitudinal driver intent (throttle or brake).
+        // Expressed as fraction of MaxOutputLimit.
+        // Below this: rear yaw assist disabled to avoid jitter at zero throttle.
         static constexpr float RearFadeThrottle0 = 0.05f;
+
+        // Above this throttle/brake magnitude: rear yaw assist fully enabled.
+        // Between Throttle0 and Throttle1, effect ramps in linearly.
         static constexpr float RearFadeThrottle1 = 0.3f;
+
+        // Maximum differential steering torque applied on the front axle.
+        // This is the primary steering actuator (torque steer).
         static constexpr float SteerTorqueFront = 200.f;
+
+        // Maximum yaw-assist differential torque applied on the rear axle.
+        // This stabilizes / assists turning but is NOT a steering actuator.
         static constexpr float SteerTorqueRear = 200.f;
+
+        // Absolute per-wheel torque limit sent to motor controllers.
+        // All torque commands are clamped to [-MaxOutputLimit .. +MaxOutputLimit].
         static constexpr float MaxOutputLimit = 400.f;
 
-        // ABS/ASR (very simple slip control)
-        static constexpr float SlipRatio = 0.20f;        // 20% deviation
-        static constexpr float SlipDownFactor = 0.70f;  // multiply when slipping
-        static constexpr float SlipMinScale = 0.25f;    // never go below this
-        static constexpr float SlipRecoverPerTick = 0.1f; // +10% towards 1.0 per tick if no slip
-        static constexpr float SlipSpeedEps = 10.f;     // ignore slip logic below this ref speed (noise)
+        // -----------------------------------------------------------------------------
+        // ABS / ASR – very simple reactive slip control
+        //
+        // This is NOT a predictive model and does not use wheel acceleration.
+        // It purely reacts to speed deviations between wheels *in the same tick*.
+        // The goal is robustness and stability, not optimal traction.
+        // -----------------------------------------------------------------------------
+
+        // Relative speed deviation threshold to detect slip.
+        // If a wheel deviates more than this fraction from the reference wheel speed,
+        // it is considered slipping.
+        //
+        // Example: 0.20 = 20%
+        // - ASR: driven wheel spins > +20% faster than others under positive torque
+        // - ABS: wheel slows > -20% compared to others under negative torque
+        static constexpr float SlipRatio = 0.20f;
+
+        // Torque reduction factor applied when slip is detected on a wheel.
+        // The current requested torque for that wheel is multiplied by this value.
+        // Repeated slip over consecutive ticks compounds the reduction.
+        static constexpr float SlipDownFactor = 0.70f;
+
+        // Minimum allowed torque scaling due to slip control.
+        // Prevents torque from being reduced to zero permanently
+        // and ensures the wheel can recover traction.
+        static constexpr float SlipMinScale = 0.25f;
+
+        // Recovery rate per control tick when no slip is detected.
+        // The per-wheel torque scaling factor is increased by this amount towards 1.0
+        // every tick without slip, enabling smooth reapplication of torque.
+        static constexpr float SlipRecoverPerTick = 0.10f;
+
+        // Minimum reference speed required to evaluate slip logic.
+        // Below this speed, slip detection is disabled to avoid noise-triggered
+        // ABS/ASR behavior at standstill or very low speeds.
+        static constexpr float SlipSpeedEps = 10.f;
+
+        // torque distribution between front and rear under acceleration and braking
+        static constexpr float DriveFrontShareLow  = 0.55f;
+        static constexpr float DriveFrontShareHigh = 0.30f;
+        static constexpr float BrakeFrontShareLow  = 0.60f;
+        static constexpr float BrakeFrontShareHigh = 0.80f;
+        static constexpr float BiasHighThrottle    = 0.6f;   // |throttle|/maxT where high share is reached
     }
 }
 
@@ -107,6 +178,7 @@ protected:
         int16_t aux      = 0;
         bool    detected = false;
         bool    someInput = false;
+        bool    auxSign   = false;
         bool    doubleTap = false;
     };
 

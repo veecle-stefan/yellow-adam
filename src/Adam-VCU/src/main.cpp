@@ -75,6 +75,7 @@ static void setupOTA()
       }
     });
 
+  ArduinoOTA.setPassword(AP_PASS);
   ArduinoOTA.begin();
   Serial.println("[OTA] Ready (AP mode)");
 
