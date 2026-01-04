@@ -65,6 +65,7 @@ public:
     
 
     Axle(uart_port_t hwSerialNum, uint8_t pinRX, uint8_t pinTX);
+    void Shutdown();
     bool Send(int16_t motL, int16_t motR, RemoteCommand func = CmdNOP);
     bool WaitForFeedback(HistoryFrame& out, TickType_t timeout);
     MotorStates GetLatestFeedback();
@@ -76,6 +77,8 @@ protected:
     uint8_t recvCap = 0;
     QueueHandle_t feedbackQueue;  // size = 1
     QueueHandle_t commandQueue;   // size = 1
+    TaskHandle_t receiverTask = NULL;
+    TaskHandle_t senderTask = NULL;
 
     std::deque<HistoryFrame> historyBuffer;
     void SendEventHandler();

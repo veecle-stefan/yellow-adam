@@ -14,7 +14,7 @@ static const char* AP_SSID = "Adam";
 static const char* AP_PASS = "opeladam2026"; // >= 8 chars recommended
 static const char* hostname = "adam";
 CaptivePortalWeb portal;
-static char json[256];
+static char json[400];
 
 // Example "other code" that must keep running
 static uint32_t lastBlinkMs = 0;
@@ -24,6 +24,7 @@ static void setupWiFiAP()
 {
   WiFi.persistent(false);
   WiFi.mode(WIFI_AP);
+  WiFi.setSleep(false);
 
   // Optional: pick a fixed channel to reduce flakiness in noisy environments
   const int channel = 6;
@@ -50,6 +51,7 @@ static void setupOTA()
 
   ArduinoOTA
     .onStart([]() {
+      drive->Shutdown(); // stop all interfering high priority tasks
       Serial.println("[OTA] Start");
       lights.SetOTA(true);
     })
@@ -98,7 +100,6 @@ void setup() {
 
 void loop() {
   // put your main code here, to run repeatedly:
-  delay(10); // nothing to be done, all in background threads
   ArduinoOTA.handle();
 
   portal.loop();
@@ -118,5 +119,6 @@ void loop() {
     }
   }
 
+  vTaskDelay(1); // yield
 }
 

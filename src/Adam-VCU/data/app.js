@@ -119,10 +119,17 @@ function connectWs(){
 
     // Wheel currents (numbers next to wheels)
     const cu = msg.curr || {};
-    setWheelCurr("fl", cu.fl ?? 0);
-    setWheelCurr("fr", cu.fr ?? 0);
-    setWheelCurr("rl", cu.rl ?? 0);
-    setWheelCurr("rr", cu.rr ?? 0);
+    setVBar("curr_fl", cu.fl ?? 0);
+    setVBar("curr_fr", cu.fr ?? 0);
+    setVBar("curr_rl", cu.rl ?? 0);
+    setVBar("curr_rr", cu.rl ?? 0);
+
+    // Wheel velocities 
+    const vel = msg.vel || {};
+    setWheelSpeed("fl", vel.fl ?? 0);
+    setWheelSpeed("fr", vel.fr ?? 0);
+    setWheelSpeed("rl", vel.rl ?? 0);
+    setWheelSpeed("rr", vel.rr ?? 0);
 
     const boards = msg.boards || {};
     setBoardStat("front", boards.vf, boards.tf);
@@ -150,7 +157,7 @@ function setBtn(id, on){
 function setGear(id, text){
   const b = document.getElementById(id);
   if(!b) return;
-  b.textContent(text);
+  b.textContent = text;
 }
 
 function toggleBtn(id){
@@ -237,8 +244,14 @@ function stopManual(){
 
 function setWheelCurr(id, v){
   const el = document.getElementById("curr_" + id);
-  if(el) el.textContent = String(v | 0);
+  if(el) el.textContent = (v / 100 | 0).toFixed(2) + ' A';
 }
+
+function setWheelSpeed(id, v){
+  const el = document.getElementById("speed_" + id);
+  if(el) el.textContent = String(v | 0) + ' rpm';
+}
+
 
 function setBoardStat(id, volts, tempC){
   const elV = document.getElementById("volt_" + id);

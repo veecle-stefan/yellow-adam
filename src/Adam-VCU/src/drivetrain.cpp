@@ -10,9 +10,9 @@ DriveTrain::DriveTrain(Axle& axleF, Axle& axleR, Lights& lights)
     , axleR(axleR)
     , lights(lights)
 {
-    ch1.begin();
-    ch2.begin();
-    ch3.begin();
+    ch1.Begin();
+    ch2.Begin();
+    ch3.Begin();
 
     // create size-1 queue for status updates
     statusQueue = xQueueCreate(1, sizeof(DriveTrainStatus));
@@ -28,9 +28,19 @@ DriveTrain::DriveTrain(Axle& axleF, Axle& axleR, Lights& lights)
         SWConfig::Tasks::MinStakSize,
         this,
         SWConfig::Tasks::PrioHigh,
-        nullptr,
+        &processTask,
         SWConfig::CoreAffinity::CoreApp
     );
+}
+
+void DriveTrain::Shutdown()
+{
+    this->axleF.Shutdown();
+    this->axleR.Shutdown();
+    vTaskDelete(this->processTask);
+    this->ch1.Stop();
+    this->ch2.Stop();
+    this->ch3.Stop();
 }
 
 bool DriveTrain::GetLatestStatus(DriveTrainStatus& out) const
@@ -262,6 +272,7 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, const Ve
     t.fr = clamp(fr);
     t.rl = clamp(rl);
     t.rr = clamp(rr);
+
     return t;
 }
 
@@ -275,6 +286,13 @@ void DriveTrain::CheckGear(const TickContext& ctx, VehicleState& state)
             // from neutral or reverse -> goto Drive
             state.currGear = Gear::D;
         }
+    }
+
+    // FIXME: During testing, apply fake based on AUX
+    if (ctx.user.detected && ctx.user.aux && ctx.user.aux < 500) {
+        state.fake = false;
+    } else {
+        state.fake = true;
     }
 }
 
@@ -300,8 +318,14 @@ DriveTrain::TickDecision DriveTrain::ComputeDecision(const TickContext& ctx, Veh
 void DriveTrain::ApplyDecision(const TickDecision& dec, VehicleState& state)
 {
     // Motors
-    axleF.Send(dec.torques.fl, dec.torques.fr, dec.cmd);
-    axleR.Send(dec.torques.rl, dec.torques.rr, dec.cmd);
+    if (state.fake) {
+        //FIXME: During testing use aux to avoid real motor output
+        axleF.Send(0, 0, dec.cmd);
+        axleR.Send(0, 0, dec.cmd);
+    } else {
+        axleF.Send(dec.torques.fl, dec.torques.fr, dec.cmd);
+        axleR.Send(dec.torques.rl, dec.torques.rr, dec.cmd);
+    }
 
     // Lights
     if (dec.failSafe) {
@@ -347,6 +371,8 @@ void DriveTrain::PublishStatus(const TickContext& ctx, const TickDecision& dec, 
     st.haveFront = true;
     st.curr_fl = lastFrontFb->sample.currL_meas;
     st.curr_fr = lastFrontFb->sample.currR_meas;
+    st.vel_fl  = lastFrontFb->sample.speedL_meas;
+    st.vel_fr  = lastFrontFb->sample.speedR_meas;
     st.voltage_front = lastFrontFb->sample.batVoltage;
     st.temp_front    = lastFrontFb->sample.boardTemp;
   }
@@ -354,6 +380,8 @@ void DriveTrain::PublishStatus(const TickContext& ctx, const TickDecision& dec, 
     st.haveRear = true;
     st.curr_rl = lastRearFb->sample.currL_meas;
     st.curr_rr = lastRearFb->sample.currR_meas;
+    st.vel_rl  = lastRearFb->sample.speedL_meas;
+    st.vel_rr  = lastRearFb->sample.speedR_meas;
     st.voltage_rear = lastRearFb->sample.batVoltage;
     st.temp_rear    = lastRearFb->sample.boardTemp;
   }

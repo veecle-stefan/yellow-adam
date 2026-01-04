@@ -7,7 +7,10 @@ RCinput::RCinput(gpio_num_t pin, uint16_t deadBand)
 
     }
 
-esp_err_t RCinput::begin() {
+esp_err_t RCinput::Begin() {
+
+    this->enabled = true;
+
     // 1 MHz resolution: 1 tick = 1 µs
     rmt_rx_channel_config_t cfg = {
         .gpio_num = _pin,
@@ -42,6 +45,14 @@ esp_err_t RCinput::begin() {
                        sizeof(_symbols), &_rx_cfg);
 }
 
+void RCinput::Stop()
+{
+    this->enabled = false;
+    rmt_disable(_channel);
+    rmt_del_channel(_channel);
+    _channel = nullptr;
+}
+
 bool IRAM_ATTR RCinput::on_rx_done_static(rmt_channel_handle_t channel,
                                            const rmt_rx_done_event_data_t *edata,
                                            void *user_data) {
@@ -52,6 +63,8 @@ bool IRAM_ATTR RCinput::on_rx_done_static(rmt_channel_handle_t channel,
 
 bool IRAM_ATTR RCinput::on_rx_done(const rmt_rx_done_event_data_t *edata) {
     const rmt_symbol_word_t *syms = edata->received_symbols;
+
+    if (!this->enabled) return false;
 
     // Each symbol has two halves: (duration0, level0) then (duration1, level1)
     // We only care about the HIGH portion (the pulse width).

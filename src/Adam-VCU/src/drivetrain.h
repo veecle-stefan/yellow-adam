@@ -45,6 +45,8 @@ struct VehicleState {
     bool indicatorsL = false;
     bool indicatorsR = false;
     Gear currGear = Gear::N;
+
+    bool fake = true;
 };
 
 struct DriveTrainStatus {
@@ -60,6 +62,7 @@ struct DriveTrainStatus {
 
   // motor feedback (last known good)
   int16_t curr_fl = 0, curr_fr = 0, curr_rl = 0, curr_rr = 0;
+  int16_t vel_fl = 0, vel_fr = 0, vel_rl = 0, vel_rr = 0;
   uint16_t voltage_front = 0, voltage_rear = 0; // 35.00V => 3500 etc
   uint16_t temp_front    = 0, temp_rear    = 0; // 50.0C => 500 etc
   bool haveFront = false;
@@ -75,6 +78,7 @@ public:
 
     DriveTrain(Axle& axleF, Axle& axleR, Lights& lights);
     bool GetLatestStatus(DriveTrainStatus& out) const;
+    void Shutdown();
 
 protected:
     // ----- Types -----
@@ -115,7 +119,8 @@ protected:
     };
 
     // ----- Members -----
-    QueueHandle_t statusQueue = nullptr;
+    QueueHandle_t statusQueue = NULL;
+    TaskHandle_t processTask = NULL;
     RCinput ch1;
     RCinput ch2;
     RCinput ch3;

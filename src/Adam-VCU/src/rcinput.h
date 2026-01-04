@@ -19,17 +19,39 @@ public:
   explicit RCinput(gpio_num_t pin, uint16_t deadBand = 0);
 
   // returns ESP_OK on success
-  esp_err_t begin();
+  esp_err_t Begin();
+  void Stop();
 
   int16_t mapRange(uint16_t timeUs);
   UserInput value();
   UserInput operator*();
 
-private:
+protected:
     static bool IRAM_ATTR on_rx_done_static(rmt_channel_handle_t channel,
                                             const rmt_rx_done_event_data_t *edata,
                                             void *user_data);
-    bool on_rx_done(const rmt_rx_done_event_data_t *edata);
+      /**
+     * @brief Interrupt handler for RMT receiver completion events.
+     * 
+     * Processes received RMT symbols from an RC receiver and extracts pulse widths.
+     * Iterates through received symbols, identifying HIGH pulse durations that fall
+     * within the standard RC PWM range (800-2200 µs). Valid pulses are stored and
+     * an update counter is incremented. After processing, the receiver is re-armed
+     * for the next frame.
+     * 
+     * @param edata Pointer to RMT receive done event data containing received symbols
+     *              and symbol count
+     * 
+     * @return false Always returns false. The RMT driver does not require further
+     *         interrupt processing; returning false prevents the RMT driver from
+     *         triggering any additional interrupt-level operations.
+     * 
+     * @note This handler is marked with IRAM_ATTR for placement in IRAM to ensure
+     *       consistent interrupt latency and performance during execution.
+     * 
+     * @note The function checks if the receiver is enabled before processing symbols.
+     */
+  bool on_rx_done(const rmt_rx_done_event_data_t *edata);
 
     gpio_num_t _pin;
     rmt_channel_handle_t _channel = nullptr;
@@ -41,6 +63,7 @@ private:
     rmt_receive_config_t _rx_cfg{};
     volatile uint16_t _pulseUs = 1500;  // sane default
     volatile uint32_t       _updateCount = 0;
+    volatile bool enabled = false;
     uint32_t _lastRead = 0;
 
 };

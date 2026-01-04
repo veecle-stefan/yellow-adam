@@ -40,7 +40,7 @@ conn(hwSerialNum)
         SWConfig::Tasks::MinStakSize,
         this,
         SWConfig::Tasks::PrioHigh,
-        NULL,
+        &senderTask,
         SWConfig::CoreAffinity::CoreComms
     );
 
@@ -53,11 +53,29 @@ conn(hwSerialNum)
         SWConfig::Tasks::MinStakSize,
         this,
         SWConfig::Tasks::PrioHigh,
-        NULL,
+        &receiverTask,
         SWConfig::CoreAffinity::CoreComms
     );
 
 }
+
+void Axle::Shutdown()
+{
+    // Stop the FreeRTOS tasks
+    if (senderTask != nullptr) {
+        vTaskDelete(senderTask);
+        senderTask = nullptr;
+    }
+    if (receiverTask != nullptr) {
+        vTaskDelete(receiverTask);
+        receiverTask = nullptr;
+    }
+
+    // Uninstall UART driver
+    uart_driver_delete(conn);
+
+}
+
 
 
 void Axle::SendInternal(int16_t motL, int16_t motR, RemoteCommand remoteCmd)

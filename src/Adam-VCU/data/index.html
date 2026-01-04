@@ -82,7 +82,7 @@
     .wheel.rl{ left:-14px; bottom:78px; }
     .wheel.rr{ right:-14px; bottom:78px; }
     /* current value next to each wheel */
-    .wcurr{
+    .wspeed{
       position:absolute;
       top:50%;
       transform:translateY(-50%);
@@ -93,8 +93,8 @@
       line-height:1;
       user-select:none;
     }
-    .wheel.fl .wcurr, .wheel.rl .wcurr { left: 36px; }  /* show on the inside */
-    .wheel.fr .wcurr, .wheel.rr .wcurr { right: 36px; text-align:right; }
+    .wheel.fl .wspeed, .wheel.rl .wspeed { left: 36px; }  /* show on the inside */
+    .wheel.fr .wspeed, .wheel.rr .wspeed { right: 36px; text-align:right; }
 
     /* ECU status pill – centered on axle */
     .ecustat.axle{
@@ -198,42 +198,54 @@
          <!-- Front axle ECU status -->
         <div class="label front">FRONT</div>
         <div class="ecustat axle front">
-          <span id="volt_front">0.0 V</span>
-          <span id="temp_front">0 °C</span>
+          <span id="volt_front">--.-- V</span>
+          <span id="temp_front">--.- °C</span>
         </div>
         <div class="wheel fl">
           <div class="vbar" data-min="-1000" data-max="1000" data-id="torque_fl">
             <div class="pos"></div><div class="neg"></div><div class="mid"></div>
           </div>
-          <div class="wcurr" id="curr_fl">0</div>
+          <div class="vbar" data-min="-100" data-max="100" data-id="curr_fl">
+            <div class="pos"></div><div class="neg"></div><div class="mid"></div>
+          </div>
+          <div class="wspeed" id="speed_fl">-- rpm</div>
         </div>
 
         <div class="wheel fr">
           <div class="vbar" data-min="-1000" data-max="1000" data-id="torque_fr">
             <div class="pos"></div><div class="neg"></div><div class="mid"></div>
           </div>
-          <div class="wcurr" id="curr_fr">0</div>
+          <div class="vbar" data-min="-100" data-max="100" data-id="curr_fr">
+            <div class="pos"></div><div class="neg"></div><div class="mid"></div>
+          </div>
+          <div class="wspeed" id="speed_fr">-- rpm</div>
         </div>
 
         <div class="label rear">REAR</div>
 
         <!-- Rear axle ECU status -->
         <div class="ecustat axle rear">
-          <span id="volt_rear">0.0 V</span>
-          <span id="temp_rear">0 °C</span>
+          <span id="volt_rear">--.- V</span>
+          <span id="temp_rear">--.- °C</span>
         </div>
         <div class="wheel rl">
           <div class="vbar" data-min="-1000" data-max="1000" data-id="torque_rl">
             <div class="pos"></div><div class="neg"></div><div class="mid"></div>
           </div>
-          <div class="wcurr" id="curr_rl">0</div>
+          <div class="vbar" data-min="-100" data-max="100" data-id="curr_rl">
+            <div class="pos"></div><div class="neg"></div><div class="mid"></div>
+          </div>
+          <div class="wspeed" id="speed_rl">-- rpm</div>
         </div>
 
         <div class="wheel rr">
           <div class="vbar" data-min="-1000" data-max="1000" data-id="torque_rr">
             <div class="pos"></div><div class="neg"></div><div class="mid"></div>
           </div>
-          <div class="wcurr" id="curr_rr">0</div>
+          <div class="vbar" data-min="-100" data-max="100" data-id="curr_rr">
+            <div class="pos"></div><div class="neg"></div><div class="mid"></div>
+          </div>
+          <div class="wspeed" id="speed_rr">-- rpm</div>
         </div>
       </div>
     </div>
