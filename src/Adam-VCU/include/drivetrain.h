@@ -31,6 +31,10 @@ namespace DriveConfig {
         static constexpr float SteerTorqueLowFactor = 1.f; // most torque at standstill
         static constexpr float SteerTorqueHighFactor = 0.6f; // lower torque at speed
         static constexpr float SteerTorqueHighSpeed = 100.f; // defines 'high speed'
+        static constexpr float RearFadeSpeed0 = 5.f;
+        static constexpr float RearFadeSpeed1 = 100.f;
+        static constexpr float RearFadeThrottle0 = 0.05f;
+        static constexpr float RearFadeThrottle1 = 0.3f;
         static constexpr float SteerTorqueFront = 200.f;
         static constexpr float SteerTorqueRear = 200.f;
         static constexpr float MaxOutputLimit = 400.f;

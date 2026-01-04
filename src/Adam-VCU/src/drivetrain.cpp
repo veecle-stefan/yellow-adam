@@ -272,27 +272,69 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, const Ve
     };
 
     // =========================
-    // Rear axle: traction + mild "inner oppose" yaw assist
+    // Rear axle: traction + yaw assist (smoothly fades out near standstill / near zero throttle)
+    // - avoids pointless rear actuation at standstill when throttle ~ 0
+    // - uses pair allocation so yaw moment doesn't vanish under saturation
     // =========================
-    float rl = baseWheelCmd(sp_rl);
-    float rr = baseWheelCmd(sp_rr);
+
+    // Rear speed magnitude estimate
+    float vRear = 0.f;
+    if (sp_rl && sp_rr) vRear = 0.5f * (static_cast<float>(abs(*sp_rl)) + static_cast<float>(abs(*sp_rr)));
+    else if (sp_rl)     vRear = static_cast<float>(abs(*sp_rl));
+    else if (sp_rr)     vRear = static_cast<float>(abs(*sp_rr));
+    else                vRear = 0.f;
+
+    // Rear common-mode request: average rear base cmd (keeps your anti-reversing logic)
+    const float Tc_rear = 0.5f * (baseWheelCmd(sp_rl) + baseWheelCmd(sp_rr));
+
+    // --- Smooth fades (both in [0..1]) ---
+    // 1) speed fade: 0..1 over [RearFadeSpeed0 .. RearFadeSpeed1] (speed units == your speed*_meas units)
+    const float v0 = static_cast<float>(DriveConfig::TV::RearFadeSpeed0);
+    const float v1 = static_cast<float>(DriveConfig::TV::RearFadeSpeed1);
+    float us = (v1 > v0) ? ((vRear - v0) / (v1 - v0)) : 1.f;
+    us = clampF(us, 0.f, 1.f);
+
+    // 2) throttle fade: 0..1 over [RearFadeThrottle0 .. RearFadeThrottle1] (fractions of maxT)
+    const float thrAbs = (throttle >= 0.f) ? throttle : -throttle;
+    const float t0 = static_cast<float>(DriveConfig::TV::RearFadeThrottle0) * maxT;
+    const float t1 = static_cast<float>(DriveConfig::TV::RearFadeThrottle1) * maxT;
+    float ut = (t1 > t0) ? ((thrAbs - t0) / (t1 - t0)) : 1.f;
+    ut = clampF(ut, 0.f, 1.f);
+
+    const float fadeRear = us * ut;
+
+    // Differential yaw assist (inner wheel opposes motion)
+    float Td_rear = 0.f;
 
     if (absS > 0.001f) {
         const float oppMag = absS * static_cast<float>(DriveConfig::TV::SteerTorqueRear);
 
-        auto oppDir = [&](std::optional<int16_t> sp) -> float {
-            const float motionSign = sp ? signOf(*sp) : gearSign;
-            return -motionSign; // always opposing motion (or expected motion)
+        auto motionSign = [&](std::optional<int16_t> sp) -> float {
+            return sp ? signOf(*sp) : gearSign;
         };
 
+        // Convention: rl = Tc + Td, rr = Tc - Td
         if (s > 0.0f) {
-            // turning right => right is inner
-            rr += oppDir(sp_rr) * oppMag;
+            // turning right => right is inner => want RR to oppose motion
+            // rr = Tc - Td. Want (-Td) = (-motionSign_rr)*oppMag  => Td = motionSign_rr*oppMag
+            Td_rear = motionSign(sp_rr) * oppMag;
         } else {
-            // turning left => left is inner
-            rl += oppDir(sp_rl) * oppMag;
+            // turning left => left is inner => want RL to oppose motion
+            // rl = Tc + Td. Want (+Td) = (-motionSign_rl)*oppMag  => Td = -motionSign_rl*oppMag
+            Td_rear = -motionSign(sp_rl) * oppMag;
         }
+
+        Td_rear *= fadeRear;
+
+        // Optional: rate limit rear yaw assist too (often smaller than front, but reuse your constant for now)
+        static float lastTdRear = 0.f;
+        const float maxTdRearDeltaPerTick = DriveConfig::TV::MaxTorquePerTick * maxT;
+        Td_rear = rateLimit(Td_rear, lastTdRear, maxTdRearDeltaPerTick);
     }
+
+    const auto rp = allocate_pair(Tc_rear, Td_rear);
+    float rl = rp.l;
+    float rr = rp.r;
 
     // =========================
     // Front axle: steering is an actuator -> preserve differential by reducing common-mode if needed
@@ -307,7 +349,7 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, const Ve
     else if (sp_fr)     vFront = static_cast<float>(abs(*sp_fr));
     else                vFront = 0.f;
 
-    // Gain schedule: k(v) = lerp(kLowSpeed, kHighSpeed, u), u in [0..1] over [v0..v1]
+    // Gain schedule: k(v) = lerp(kLowSpeed, kHighSpeed, u), u in [0..1] over [0..SteerTorqueHighSpeed]
     float u = vFront / DriveConfig::TV::SteerTorqueHighSpeed;
     u = clampF(u, 0.f, 1.f);
     const float k = lerp(DriveConfig::TV::SteerTorqueLowFactor, DriveConfig::TV::SteerTorqueHighFactor, u);
@@ -316,9 +358,8 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, const Ve
     float Td_front = s * static_cast<float>(DriveConfig::TV::SteerTorqueFront) * k;
 
     // Rate limit steering differential to avoid rack kicks
-    // (Tune maxDeltaPerTick; if you have dt, scale it, otherwise pick a conservative value.)
     static float lastTdFront = 0.f;
-    const float maxTdDeltaPerTick = DriveConfig::TV::MaxTorquePerTick * maxT; // e.g. 10% of full torque per tick (tune)
+    const float maxTdDeltaPerTick = DriveConfig::TV::MaxTorquePerTick * maxT;
     Td_front = rateLimit(Td_front, lastTdFront, maxTdDeltaPerTick);
 
     // Allocate front pair with steering priority (reduces Tc_front if needed)
@@ -336,7 +377,6 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, const Ve
 
     return t;
 }
-
 void DriveTrain::CheckGear(const TickContext& ctx, VehicleState& state)
 {
     // check for double-tap on the brake while not moving
