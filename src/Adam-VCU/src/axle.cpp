@@ -156,6 +156,8 @@ uint8_t Axle::ProcessFeedbackFrame(uint8_t* buffer, size_t len)
         );
 
         if (packet.start == StartFrame && checksum == packet.checksum) {
+            // FIXME: Temporary fix before sign firmware update
+            packet.speedR_meas = -packet.speedR_meas;
             PushFeedback(packet);  // just hand it to the queue
             return static_cast<uint8_t>(skipped + sizeof(SerialFeedback));
         }

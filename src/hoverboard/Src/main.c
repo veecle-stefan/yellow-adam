@@ -514,8 +514,8 @@ int main(void) {
         Feedback.start	        = (uint16_t)SERIAL_START_FRAME;
         Feedback.cmd1           = (int16_t)input1[inIdx].cmd;
         Feedback.cmd2           = (int16_t)input2[inIdx].cmd;
-        Feedback.speedR_meas	  = (int16_t)rtY_Right.n_mot;
-        Feedback.speedL_meas	  = (int16_t)rtY_Left.n_mot;
+        Feedback.speedR_meas	  = -(int16_t)rtY_Right.n_mot; // one wheel spins backwards, now signs match torque request
+        Feedback.speedL_meas	  = (int16_t)rtY_Left.n_mot; 
         Feedback.batVoltage	    = (int16_t)batVoltageCalib;
         Feedback.boardTemp	    = (int16_t)board_temp_deg_c;
         Feedback.currL_meas     = (int16_t)left_dc_curr;
