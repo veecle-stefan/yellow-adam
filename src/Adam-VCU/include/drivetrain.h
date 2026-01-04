@@ -27,8 +27,9 @@ namespace DriveConfig {
     }
 
     namespace TV { // Torque Vectoring
-        static constexpr float SteerTorqueFront = 30.f;
-        static constexpr float SteerTorqueRear = 50.f;
+        static constexpr float SteerTorqueFront = 90.f;
+        static constexpr float SteerTorqueRear = 200.f;
+        static constexpr float MaxOutputLimit = 300.f;
     }
 }
 
@@ -45,8 +46,6 @@ struct VehicleState {
     bool indicatorsL = false;
     bool indicatorsR = false;
     Gear currGear = Gear::N;
-
-    bool fake = true;
 };
 
 struct DriveTrainStatus {

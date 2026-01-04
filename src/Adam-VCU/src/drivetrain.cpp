@@ -178,7 +178,7 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, const Ve
         return t;
     }
 
-    const float throttle = static_cast<float>(ctx.user.throttle); // [-1000..1000]
+    const float throttle = static_cast<float>(ctx.user.throttle * DriveConfig::TV::MaxOutputLimit / 1000.f); // [-1000..1000]
     float s = static_cast<float>(ctx.user.steering) / 1000.0f;    // [-1..1]
     if (s >  1.0f) s =  1.0f;
     if (s < -1.0f) s = -1.0f;
@@ -263,8 +263,8 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, const Ve
     }
 
     auto clamp = [](float v) -> int16_t {
-        if (v >  1000.0f) v =  1000.0f;
-        if (v < -1000.0f) v = -1000.0f;
+        if (v >  DriveConfig::TV::MaxOutputLimit) v =  DriveConfig::TV::MaxOutputLimit;
+        if (v < -DriveConfig::TV::MaxOutputLimit) v = -DriveConfig::TV::MaxOutputLimit;
         return static_cast<int16_t>(v);
     };
 
@@ -286,13 +286,6 @@ void DriveTrain::CheckGear(const TickContext& ctx, VehicleState& state)
             // from neutral or reverse -> goto Drive
             state.currGear = Gear::D;
         }
-    }
-
-    // FIXME: During testing, apply fake based on AUX
-    if (ctx.user.detected && ctx.user.aux && ctx.user.aux < 500) {
-        state.fake = false;
-    } else {
-        state.fake = true;
     }
 }
 
@@ -318,14 +311,9 @@ DriveTrain::TickDecision DriveTrain::ComputeDecision(const TickContext& ctx, Veh
 void DriveTrain::ApplyDecision(const TickDecision& dec, VehicleState& state)
 {
     // Motors
-    if (state.fake) {
-        //FIXME: During testing use aux to avoid real motor output
-        axleF.Send(0, 0, dec.cmd);
-        axleR.Send(0, 0, dec.cmd);
-    } else {
-        axleF.Send(dec.torques.fl, dec.torques.fr, dec.cmd);
-        axleR.Send(dec.torques.rl, dec.torques.rr, dec.cmd);
-    }
+    axleF.Send(dec.torques.fl, dec.torques.fr, dec.cmd);
+    axleR.Send(dec.torques.rl, dec.torques.rr, dec.cmd);
+
 
     // Lights
     if (dec.failSafe) {

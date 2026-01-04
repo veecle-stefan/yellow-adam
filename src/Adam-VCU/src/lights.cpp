@@ -70,6 +70,7 @@ void Lights::SetOTAprogress(uint8_t percent)
 
 void Lights::UpdateLights()
 {
+    static uint8_t knightRider = 0;
     // take all the current states and generate LED patterns
 
     if (stOTA) {
@@ -99,6 +100,11 @@ void Lights::UpdateLights()
         if (this->stBrakeLight) {
             TailLights[0] = TailLights[HWConfig::Sizes::LEDs::NumTaillights-1] = ColBrake;
             TailLights[1] = TailLights[HWConfig::Sizes::LEDs::NumTaillights-2] = ColBrake;
+        }
+
+        if (this->stReverseLight) {
+            TailLights[knightRider] = TailLights[HWConfig::Sizes::LEDs::NumTaillights-1-knightRider] = ColOff;
+            knightRider = (knightRider + 1) % (HWConfig::Sizes::LEDs::NumTaillights / 2);
         }
 
         // 3. Head lights
