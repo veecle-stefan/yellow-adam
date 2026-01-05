@@ -3,269 +3,193 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Car</title>
+  <title>Vehicle Controller</title>
   <style>
     :root{
       --bg:#0b0c10; --fg:#e9ecf1; --muted:#8a93a6; --line:#20263a;
-      --barbg:#141a2b;
-      --fillWs:#3b82f6;   /* normal (WS) */
-      --fillLocal:#22c55e;/* manual override (local joystick) */
-      --car:#151a28; --wheel:#000;
+      --card:#111526; --card2:#0e1220;
+      --tq:#60a5fa;   /* torque */
+      --cu:#f59e0b;   /* current */
+      --rpm:#a78bfa;  /* rpm */
+      --ok:#22c55e;
     }
     *{ box-sizing:border-box; }
     body{ margin:0; padding:12px; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
           background:var(--bg); color:var(--fg); }
-    .wrap{ max-width:420px; margin:0 auto; display:flex; flex-direction:column; gap:12px; }
+    .wrap{ max-width:520px; margin:0 auto; display:flex; flex-direction:column; gap:12px; }
 
     /* ---- Inputs (T + S side by side) ---- */
     .inputs{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-    .ibox{ border:1px solid var(--line); border-radius:14px; padding:10px; background:rgba(255,255,255,0.02); }
+    .ibox{ border:1px solid var(--line); border-radius:16px; padding:10px; background:rgba(255,255,255,0.02); }
     .ihead{ display:flex; align-items:baseline; justify-content:space-between; margin-bottom:8px; }
     .tag{ font-weight:900; color:var(--muted); letter-spacing:0.02em; }
     .num{ font-variant-numeric:tabular-nums; font-weight:900; }
 
-    /* centered tiny horizontal bar */
-    .hbar{
-      position:relative; height:12px; background:var(--barbg);
-      border:1px solid var(--line); border-radius:999px; overflow:hidden;
-    }
+    .hbar{ position:relative; height:12px; background:#141a2b; border:1px solid var(--line);
+           border-radius:999px; overflow:hidden; }
     .hbar .mid{ position:absolute; left:50%; top:0; bottom:0; width:2px; background:#2a3350; transform:translateX(-1px); }
-    .hbar .neg,.hbar .pos{ position:absolute; top:0; bottom:0; background:var(--fillWs); }
+    .hbar .neg,.hbar .pos{ position:absolute; top:0; bottom:0; background:#3b82f6; }
     .hbar .neg{ right:50%; width:0%; }
     .hbar .pos{ left:50%; width:0%; }
-
-    /* Manual override: color bars green + subtle glow */
     body.manual .hbar .neg,
-    body.manual .hbar .pos{
-      background:var(--fillLocal);
-      box-shadow: 0 0 10px rgba(34,197,94,0.25);
-    }
+    body.manual .hbar .pos{ background:var(--ok); box-shadow:0 0 10px rgba(34,197,94,0.25); }
 
-    /* ---- Car (vertical) ---- */
-    .carbox{ display:flex; justify-content:center; }
-    .car{
-      position:relative;
-      width:240px;
-      height:380px;
-      background:var(--car);
-      border:1px solid var(--line);
-      border-radius:18px;
+    /* ---- Axles ---- */
+    .axle{ border:1px solid var(--line); border-radius:22px; background:linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+           padding:12px; }
+    .axleHead{ display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:10px; }
+    .axleTitle{ font-weight:1000; letter-spacing:0.06em; color:var(--muted); }
+    .axleMetrics{ display:flex; gap:10px; }
+    .metric{ background:rgba(0,0,0,0.25); border:1px solid var(--line); border-radius:999px; padding:6px 10px;
+             display:flex; align-items:baseline; gap:6px; font-variant-numeric:tabular-nums; }
+    .metric .v{ font-weight:1000; }
+    .metric .u{ color:var(--muted); font-weight:900; }
 
-      /* critical: don’t scroll page while controlling */
-      touch-action:none;
-      user-select:none;
-    }
+    .wheelRow{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .wheelCard{ border-radius:22px; background:rgba(0,0,0,0.55); border:1px solid var(--line); overflow:hidden; }
+    .wheelCardInner{ padding:12px; }
 
-    /* optional hint text */
-    .hint{
-      position:absolute; left:0; right:0; top:50%;
-      transform:translateY(-50%);
-      text-align:center;
-      color:rgba(138,147,166,0.6);
-      font-size:12px;
-      font-weight:800;
-      pointer-events:none;
-    }
-    body.manual .hint{ display:none; }
+    /* Chart + overlays (like the temp/humidity reference) */
+    .chartWrap{ position:relative; width:100%; height:140px; border-radius:16px; overflow:hidden;
+                background:linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.00));
+                border:1px solid rgba(255,255,255,0.06); }
+    canvas.spark{ width:100%; height:100%; display:block; }
 
-    /* Wheels are vertical blocks; each contains a vertical centered bar */
-    .wheel{
-      position:absolute;
-      width:30px; height:90px;
-      background:var(--wheel);
-      border-radius:12px;
-      padding:5px;
-      display:flex; align-items:center; justify-content:center;
-    }
-    .wheel.fl{ left:-14px; top:78px; }
-    .wheel.fr{ right:-14px; top:78px; }
-    .wheel.rl{ left:-14px; bottom:78px; }
-    .wheel.rr{ right:-14px; bottom:78px; }
-    /* current value next to each wheel */
-    .wspeed{
-      position:absolute;
-      top:50%;
-      transform:translateY(-50%);
-      font-size:11px;
-      font-weight:900;
-      color:var(--muted);
-      font-variant-numeric:tabular-nums;
-      line-height:1;
-      user-select:none;
-    }
-    .wheel.fl .wspeed, .wheel.rl .wspeed { left: 36px; }  /* show on the inside */
-    .wheel.fr .wspeed, .wheel.rr .wspeed { right: 36px; text-align:right; }
+    .ov{ position:absolute; display:flex; flex-direction:column; gap:2px; }
+    .ov .val{ font-weight:1000; font-size:18px; line-height:1; font-variant-numeric:tabular-nums; }
+    .ov .lbl{ font-weight:900; font-size:12px; color:rgba(138,147,166,0.85); letter-spacing:0.01em; }
+    .ov.tq{ left:10px; top:10px; }
+    .ov.cu{ right:10px; top:10px; text-align:right; }
+    .ov.rpm{ left:10px; bottom:10px; }
+    .ov .val.tq{ color:var(--tq); }
+    .ov .val.cu{ color:var(--cu); }
+    .ov .val.rpm{ color:var(--rpm); }
 
-    /* ECU status pill – centered on axle */
-    .ecustat.axle{
-      position:absolute;
-      left:50%;
-      transform:translateX(-50%);
-      display:flex;
-      gap:8px;
+    .wheelName{ margin-top:10px; display:flex; justify-content:space-between; align-items:center; }
+    .wheelName .name{ font-weight:1000; letter-spacing:0.04em; color:rgba(233,236,241,0.9); }
+    .wheelName .hint{ color:rgba(138,147,166,0.8); font-weight:900; font-size:12px; }
 
-      padding:3px 10px;
-      border:1px solid var(--line);
-      border-radius:999px;
-      background:rgba(0,0,0,0.28);
-
-      font-size:11px;
-      font-weight:900;
-      font-variant-numeric:tabular-nums;
-      color:var(--muted);
-      user-select:none;
-      white-space:nowrap;
-    }
-
-    /* Axle positions (match wheel Y offsets) */
-    .ecustat.axle.front{ top: 64px; }
-    .ecustat.axle.rear { bottom: 64px; }
-
-    /* Optional: visually separate voltage / temperature */
-    .ecustat.axle span{
-      padding:0 4px;
-    }
-
-    /* FRONT / REAR labels inside the car */
-    .label{
-      position:absolute;
-      left:0;
-      right:0;
-      text-align:center;
-
-      font-size:11px;
-      font-weight:800;
-      letter-spacing:0.04em;
-      color:var(--muted);
-
-      user-select:none;
-      pointer-events:none;
-    }
-
-    .label.front{ top:8px; }
-    .label.rear { bottom:8px; }
-    /* centered vertical bar: negative down, positive up */
-    .vbar{
-      position:relative;
-      width:10px; height:100%;
-      background:#0f1322;
-      border:1px solid #1c2236;
-      border-radius:999px;
-      overflow:hidden;
-    }
-    .vbar .mid{ position:absolute; left:0; right:0; top:50%; height:2px; background:#2a3350; transform:translateY(-1px); }
-    .vbar .pos,.vbar .neg{ position:absolute; left:0; right:0; background:var(--fillWs); }
-    .vbar .pos{ bottom:50%; height:0%; }
-    .vbar .neg{ top:50%; height:0%; }
+    /* ---- Drive pad (gesture area) ---- */
+    .drivepad{ border:1px dashed rgba(138,147,166,0.35); border-radius:18px; padding:10px;
+               color:rgba(138,147,166,0.65); font-weight:900; text-align:center;
+               touch-action:none; user-select:none; }
+    body.manual .drivepad{ border-style:solid; border-color:rgba(34,197,94,0.45); color:rgba(233,236,241,0.85); }
 
     /* ---- Buttons ---- */
     .btns{ display:grid; grid-template-columns: repeat(5, 1fr); gap:8px; }
-    button{
-      appearance:none; border:1px solid var(--line); background:transparent; color:var(--fg);
-      border-radius:12px; padding:10px 0; font-size:18px; font-weight:800;
-      cursor:pointer;
-    }
+    button{ appearance:none; border:1px solid var(--line); background:transparent; color:var(--fg);
+            border-radius:12px; padding:10px 0; font-size:18px; font-weight:800; cursor:pointer; }
     button.on{ border-color:rgba(59,130,246,.6); background:rgba(59,130,246,.15); }
 
-    /* ---- small footer ---- */
     .foot{ color:var(--muted); font-size:12px; display:flex; justify-content:space-between; }
     .pill{ padding:2px 8px; border:1px solid var(--line); border-radius:999px; }
+
+    @media (max-width:420px){
+      .wrap{ max-width:420px; }
+      .wheelRow{ grid-template-columns:1fr; }
+      .chartWrap{ height:155px; }
+    }
   </style>
 </head>
-
 <body>
   <div class="wrap">
-
     <div class="inputs">
       <div class="ibox">
-        <div class="ihead"><div class="tag">T</div><div class="num" id="val_throttle">0</div></div>
-        <div class="hbar" data-min="-1000" data-max="1000" data-id="throttle">
-          <div class="neg"></div><div class="pos"></div><div class="mid"></div>
-        </div>
+        <div class="ihead"><span class="tag">Throttle</span><span class="num" id="val_throttle">0</span></div>
+        <div class="hbar" data-id="throttle" data-min="-1000" data-max="1000"><div class="neg"></div><div class="pos"></div><div class="mid"></div></div>
       </div>
-
       <div class="ibox">
-        <div class="ihead"><div class="tag">S</div><div class="num" id="val_steering">0</div></div>
-        <div class="hbar" data-min="-1000" data-max="1000" data-id="steering">
-          <div class="neg"></div><div class="pos"></div><div class="mid"></div>
-        </div>
+        <div class="ihead"><span class="tag">Steering</span><span class="num" id="val_steering">0</span></div>
+        <div class="hbar" data-id="steering" data-min="-1000" data-max="1000"><div class="neg"></div><div class="pos"></div><div class="mid"></div></div>
       </div>
     </div>
 
-    <div class="carbox">
-      <div class="car" id="car">
-        <div class="hint">touch + drag to drive</div>
-         <!-- Front axle ECU status -->
-        <div class="label front">FRONT</div>
-        <div class="ecustat axle front">
-          <span id="volt_front">--.-- V</span>
-          <span id="temp_front">--.- °C</span>
-        </div>
-        <div class="wheel fl">
-          <div class="vbar" data-min="-1000" data-max="1000" data-id="torque_fl">
-            <div class="pos"></div><div class="neg"></div><div class="mid"></div>
-          </div>
-          <div class="vbar" data-min="-100" data-max="100" data-id="curr_fl">
-            <div class="pos"></div><div class="neg"></div><div class="mid"></div>
-          </div>
-          <div class="wspeed" id="speed_fl">-- rpm</div>
-        </div>
+    <div class="drivepad" id="drivepad">touch + drag to drive</div>
 
-        <div class="wheel fr">
-          <div class="vbar" data-min="-1000" data-max="1000" data-id="torque_fr">
-            <div class="pos"></div><div class="neg"></div><div class="mid"></div>
-          </div>
-          <div class="vbar" data-min="-100" data-max="100" data-id="curr_fr">
-            <div class="pos"></div><div class="neg"></div><div class="mid"></div>
-          </div>
-          <div class="wspeed" id="speed_fr">-- rpm</div>
-        </div>
-
-        <div class="label rear">REAR</div>
-
-        <!-- Rear axle ECU status -->
-        <div class="ecustat axle rear">
-          <span id="volt_rear">--.- V</span>
-          <span id="temp_rear">--.- °C</span>
-        </div>
-        <div class="wheel rl">
-          <div class="vbar" data-min="-1000" data-max="1000" data-id="torque_rl">
-            <div class="pos"></div><div class="neg"></div><div class="mid"></div>
-          </div>
-          <div class="vbar" data-min="-100" data-max="100" data-id="curr_rl">
-            <div class="pos"></div><div class="neg"></div><div class="mid"></div>
-          </div>
-          <div class="wspeed" id="speed_rl">-- rpm</div>
-        </div>
-
-        <div class="wheel rr">
-          <div class="vbar" data-min="-1000" data-max="1000" data-id="torque_rr">
-            <div class="pos"></div><div class="neg"></div><div class="mid"></div>
-          </div>
-          <div class="vbar" data-min="-100" data-max="100" data-id="curr_rr">
-            <div class="pos"></div><div class="neg"></div><div class="mid"></div>
-          </div>
-          <div class="wspeed" id="speed_rr">-- rpm</div>
+    <section class="axle" id="axle_front">
+      <div class="axleHead">
+        <div class="axleTitle">FRONT</div>
+        <div class="axleMetrics">
+          <div class="metric"><span class="v" id="volt_front">--.-</span><span class="u">V</span></div>
+          <div class="metric"><span class="v" id="temp_front">--.-</span><span class="u">°C</span></div>
         </div>
       </div>
-    </div>
+      <div class="wheelRow">
+        <div class="wheelCard">
+          <div class="wheelCardInner">
+            <div class="chartWrap">
+              <canvas class="spark" id="spark_fl"></canvas>
+              <div class="ov tq"><div class="val tq" id="tq_fl">-- Nm</div><div class="lbl">Torque</div></div>
+              <div class="ov cu"><div class="val cu" id="cu_fl">-- A</div><div class="lbl">Current</div></div>
+              <div class="ov rpm"><div class="val rpm" id="rpm_fl">-- rpm</div><div class="lbl">RPM</div></div>
+            </div>
+            <div class="wheelName"><div class="name">Front Left</div><div class="hint">FL</div></div>
+          </div>
+        </div>
+        <div class="wheelCard">
+          <div class="wheelCardInner">
+            <div class="chartWrap">
+              <canvas class="spark" id="spark_fr"></canvas>
+              <div class="ov tq"><div class="val tq" id="tq_fr">-- Nm</div><div class="lbl">Torque</div></div>
+              <div class="ov cu"><div class="val cu" id="cu_fr">-- A</div><div class="lbl">Current</div></div>
+              <div class="ov rpm"><div class="val rpm" id="rpm_fr">-- rpm</div><div class="lbl">RPM</div></div>
+            </div>
+            <div class="wheelName"><div class="name">Front Right</div><div class="hint">FR</div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="axle" id="axle_rear">
+      <div class="axleHead">
+        <div class="axleTitle">REAR</div>
+        <div class="axleMetrics">
+          <div class="metric"><span class="v" id="volt_rear">--.-</span><span class="u">V</span></div>
+          <div class="metric"><span class="v" id="temp_rear">--.-</span><span class="u">°C</span></div>
+        </div>
+      </div>
+      <div class="wheelRow">
+        <div class="wheelCard">
+          <div class="wheelCardInner">
+            <div class="chartWrap">
+              <canvas class="spark" id="spark_rl"></canvas>
+              <div class="ov tq"><div class="val tq" id="tq_rl">-- Nm</div><div class="lbl">Torque</div></div>
+              <div class="ov cu"><div class="val cu" id="cu_rl">-- A</div><div class="lbl">Current</div></div>
+              <div class="ov rpm"><div class="val rpm" id="rpm_rl">-- rpm</div><div class="lbl">RPM</div></div>
+            </div>
+            <div class="wheelName"><div class="name">Rear Left</div><div class="hint">RL</div></div>
+          </div>
+        </div>
+        <div class="wheelCard">
+          <div class="wheelCardInner">
+            <div class="chartWrap">
+              <canvas class="spark" id="spark_rr"></canvas>
+              <div class="ov tq"><div class="val tq" id="tq_rr">-- Nm</div><div class="lbl">Torque</div></div>
+              <div class="ov cu"><div class="val cu" id="cu_rr">-- A</div><div class="lbl">Current</div></div>
+              <div class="ov rpm"><div class="val rpm" id="rpm_rr">-- rpm</div><div class="lbl">RPM</div></div>
+            </div>
+            <div class="wheelName"><div class="name">Rear Right</div><div class="hint">RR</div></div>
+          </div>
+        </div>
+      </div>
+    </section>
 
     <div class="btns">
       <button id="btn_gear"   type="button" title="N">N</button>
       <button id="btn_high"  type="button" title="High">🔦</button>
       <button id="btn_ind_l" type="button" title="Left">⬅️</button>
       <button id="btn_ind_r" type="button" title="Right">➡️</button>
+      <button id="btn_dump"  type="button" title="Dump history">⬇️</button>
     </div>
 
     <div class="foot">
       <div class="pill" id="ws_state">ws: ...</div>
       <div class="pill" id="mode_state">mode: ws</div>
     </div>
-
   </div>
 
   <!-- Replay controls only used when opened with ?replay=1 -->
-  <div id="replay_controls" style="display:none; gap:8px; align-items:center; color:#8a93a6; font-size:12px;">
+  <div id="replay_controls" style="display:none; gap:8px; align-items:center; color:#8a93a6; font-size:12px; padding:0 12px 12px;">
     <span class="pill">replay</span>
     <input id="replay_file" type="file" accept=".ndjson,.jsonl,.txt,.log" />
     <label>
@@ -275,7 +199,6 @@
   </div>
 
   <script>
-    // Show controls only in replay mode
     if (new URLSearchParams(location.search).has("replay")) {
       const el = document.getElementById("replay_controls");
       if (el) el.style.display = "flex";

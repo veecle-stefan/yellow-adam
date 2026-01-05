@@ -56,7 +56,7 @@ bool JSONInteraction::DispatchCommand(const String& msg, DriveTrain* drive)
     }
 
     // External control enable/disable: {"type":"cmd","name":"extctrl","on":true}
-    if (name == "extctrl" || name == "ext_ctrl" || name == "external_control") {
+    if (name == "extctrl") {
       drive->SendExternalControl(on);
       return true;
     }
@@ -72,17 +72,20 @@ bool JSONInteraction::DispatchCommand(const String& msg, DriveTrain* drive)
       return true;
     }
 
-    p = msg.indexOf("\"gear\":\"");
-    if (p >= 0) {
+   // gear command: {"type":"cmd","name":"gear","gear":"D"}
+    if (name == "gear") {
+      int p = msg.indexOf("\"gear\":\"");
+      if (p < 0) return false;
+
       p += 8;
-      q = msg.indexOf('"', p);
-      if (q >= 0 && q > p) {
-        char g = msg.charAt(p);
-        if (g == 'D') drive->SendGear(Gear::D);
-        else if (g == 'R') drive->SendGear(Gear::R);
-        else drive->SendGear(Gear::N);
-        return true;
-      }
+      int q = msg.indexOf('"', p);
+      if (q < 0 || q <= p) return false;
+
+      char g = msg.charAt(p);
+      if (g == 'D') drive->SendGear(Gear::D);
+      else if (g == 'R') drive->SendGear(Gear::R);
+      else drive->SendGear(Gear::N);
+      return true;
     }
 
     // power limit: {"type":"cmd","name":"limit","maxThrottle":123,"maxSpeed":456}
