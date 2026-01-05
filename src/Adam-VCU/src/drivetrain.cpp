@@ -17,6 +17,8 @@ DriveTrain::DriveTrain(Axle& axleF, Axle& axleR, Lights& lights)
     // create size-1 queue for status updates
     statusQueue = xQueueCreate(1, sizeof(DriveTrainStatus));
     configASSERT(statusQueue);
+    extCmdQueue = xQueueCreate(10, sizeof(CommandItem));
+    configASSERT(extCmdQueue);
 
     // Start background control task
     xTaskCreatePinnedToCore(
@@ -41,6 +43,63 @@ void DriveTrain::Shutdown()
     this->ch1.Stop();
     this->ch2.Stop();
     this->ch3.Stop();
+}
+
+void DriveTrain::SendCommand(const CommandItem* cmd)
+{
+    xQueueSend(extCmdQueue, cmd, portMAX_DELAY);
+}
+
+void DriveTrain::SendGear(Gear newGear)
+{
+    CommandItem cmd;
+    cmd.cmd = DriveCommand::SetGear;
+    cmd.p1.u8 = newGear;
+    SendCommand(&cmd);
+}
+
+void DriveTrain::SendIndicators(bool left, bool right)
+{
+    CommandItem cmd;
+    cmd.cmd = DriveCommand::SetIndicators;
+    cmd.p1.onOff = left;
+    cmd.p2.onOff = right;
+    SendCommand(&cmd);
+}
+
+void DriveTrain::SendPowerLimit(uint16_t maxThrottle, uint16_t maxSpeed)
+{
+    CommandItem cmd;
+    cmd.cmd = DriveCommand::SetPowerLimit;
+    cmd.p1.u16 = maxThrottle;
+    cmd.p2.u16 = maxSpeed;
+    SendCommand(&cmd);
+}
+
+void DriveTrain::SendExternalControl(bool enable)
+{
+    CommandItem cmd;
+    cmd.cmd = DriveCommand::EnableExternalControl;
+    cmd.p1.onOff = enable;
+    SendCommand(&cmd);
+}
+
+void DriveTrain::SendHeadlight(uint8_t mode, bool on)
+{
+    CommandItem cmd;
+    cmd.cmd = DriveCommand::SetHeadlight;
+    cmd.p1.u8 = mode;
+    cmd.p2.onOff = on;
+    SendCommand(&cmd);
+}
+
+void DriveTrain::SendSteer(int16_t throttle, int16_t steer)
+{
+    CommandItem cmd;
+    cmd.cmd = DriveCommand::Steer;
+    cmd.p1.i16 = throttle;
+    cmd.p2.i16 = steer;
+    SendCommand(&cmd);
 }
 
 bool DriveTrain::GetLatestStatus(DriveTrainStatus& out) const
@@ -184,10 +243,10 @@ void DriveTrain::ComputeLights(const TickContext& ctx, TickDecision& dec, Vehicl
     }
 
     dec.failSafe   = false;
-    dec.brakeLight = (ctx.user.throttle <= -DriveConfig::Brakes::DetectThreshold);
-    dec.tailLight = (state.currGear != Gear::N);
-    dec.loBeam = (state.currGear == Gear::D);
-    dec.reverseLight = (state.currGear == Gear::R);
+    state.brakeLight = (ctx.user.throttle <= -DriveConfig::Brakes::DetectThreshold);
+    state.tailLight = (state.currGear != Gear::N);
+    state.loBeam = (state.currGear == Gear::D);
+    state.reverseLight = (state.currGear == Gear::R);
 }
 
 DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, const VehicleState& state)
@@ -552,10 +611,14 @@ void DriveTrain::ApplyDecision(const TickDecision& dec, VehicleState& state)
         state.hazards = false;
     }
 
-    lights.SetTailLight(dec.tailLight);
-    lights.SetBrakeLight(dec.brakeLight);
-    lights.SetHeadlight(dec.hiBeam ? Lights::HeadLightState::High : dec.loBeam ? Lights::HeadLightState::Dipped : Lights::HeadLightState::DRL);
-    lights.SetReverseLight(dec.reverseLight);
+    lights.SetTailLight(state.tailLight);
+    lights.SetBrakeLight(state.brakeLight);
+    lights.SetHeadlight(state.hiBeam ? Lights::HeadLightState::High : state.loBeam ? Lights::HeadLightState::Dipped : Lights::HeadLightState::DRL);
+    lights.SetReverseLight(state.reverseLight);
+    lights.SetIndicator(Lights::IndicatorPosition::FL, state.indicatorsL);
+    lights.SetIndicator(Lights::IndicatorPosition::RL, state.indicatorsL);
+    lights.SetIndicator(Lights::IndicatorPosition::FR, state.indicatorsR);
+    lights.SetIndicator(Lights::IndicatorPosition::RR, state.indicatorsR);
 }
 
 void DriveTrain::PublishStatus(const TickContext& ctx, const TickDecision& dec, const VehicleState& state)
@@ -596,6 +659,45 @@ void DriveTrain::PublishStatus(const TickContext& ctx, const TickDecision& dec, 
   xQueueOverwrite(statusQueue, &st);
 }
 
+void DriveTrain::ProcessExtCmds(TickContext& ctx, VehicleState& state)
+{
+// check for commands
+    CommandItem extCmd;
+    while (xQueueReceive(extCmdQueue, &extCmd, 0) == pdTRUE) {
+        switch (extCmd.cmd) {
+            case DriveCommand::SetGear:
+                state.currGear = static_cast<Gear>(extCmd.p1.u8);
+                break;
+            case DriveCommand::SetIndicators:
+                state.indicatorsL = extCmd.p1.onOff;
+                state.indicatorsR = extCmd.p2.onOff;
+                break;
+            case DriveCommand::SetPowerLimit:
+                state.maxThrottle = extCmd.p1.u16;
+                state.maxSpeed = extCmd.p2.u16;
+                break;
+            case DriveCommand::EnableExternalControl:
+                state.externalControl = extCmd.p1.onOff;
+                break;
+            case DriveCommand::SetHeadlight:
+                {
+                    uint8_t mode = extCmd.p1.u8; // 0=drl, 1=low, 2=high
+                    bool on = extCmd.p2.onOff;
+                    if (mode == 0) state.hazards = on;
+                    else if (mode == 1) state.loBeam = on;
+                    else if (mode == 2) state.hiBeam = on;
+                }
+                break;
+            case DriveCommand::Steer:
+                if (state.externalControl) {
+                    ctx.user.throttle = extCmd.p1.i16;
+                    ctx.user.steering = extCmd.p2.i16;
+                }
+                break;
+        }
+    }
+}
+
 void DriveTrain::ControlTask()
 {
     const TickType_t period       = pdMS_TO_TICKS(ControlPeriodMs);
@@ -606,6 +708,7 @@ void DriveTrain::ControlTask()
         const uint32_t nowMs = millis();
 
         TickContext  ctx = BuildContext(nowMs);
+        ProcessExtCmds(ctx, state);
         TickDecision dec = ComputeDecision(ctx, state);
         ApplyDecision(dec, state);
 

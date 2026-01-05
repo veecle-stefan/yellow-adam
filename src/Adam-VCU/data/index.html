@@ -252,19 +252,36 @@
 
     <div class="btns">
       <button id="btn_gear"   type="button" title="N">N</button>
-      <button id="btn_low"   type="button" title="Low">💡</button>
       <button id="btn_high"  type="button" title="High">🔦</button>
       <button id="btn_ind_l" type="button" title="Left">⬅️</button>
       <button id="btn_ind_r" type="button" title="Right">➡️</button>
     </div>
 
     <div class="foot">
-      <div class="pill" id="ws_state">ws: …</div>
+      <div class="pill" id="ws_state">ws: ...</div>
       <div class="pill" id="mode_state">mode: ws</div>
     </div>
 
   </div>
 
-  <script src="/app.js"></script>
+  <!-- Replay controls only used when opened with ?replay=1 -->
+  <div id="replay_controls" style="display:none; gap:8px; align-items:center; color:#8a93a6; font-size:12px;">
+    <span class="pill">replay</span>
+    <input id="replay_file" type="file" accept=".ndjson,.jsonl,.txt,.log" />
+    <label>
+      delay ms:
+      <input id="replay_delay" type="number" value="100" min="0" style="width:80px;" />
+    </label>
+  </div>
+
+  <script>
+    // Show controls only in replay mode
+    if (new URLSearchParams(location.search).has("replay")) {
+      const el = document.getElementById("replay_controls");
+      if (el) el.style.display = "flex";
+    }
+  </script>
+
+  <script src="app.js"></script>
 </body>
 </html>

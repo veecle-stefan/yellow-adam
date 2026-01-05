@@ -51,8 +51,11 @@ void Lights::SetIndicators(bool FR, bool FL, bool RR, bool RL)
     
 void Lights::SetIndicator(IndicatorPosition pos, bool newState)
 {
+    if (this->stIndicators[pos] != newState) {
+        this->internalBlinkPhase = true;
+    }
     this->stIndicators[pos] = newState;
-    this->internalBlinkPhase = true;
+    
 }
 
 void Lights::SetOTA(bool onOff)
@@ -92,6 +95,9 @@ void Lights::UpdateLights()
         OTAblink = !OTAblink;
     } else {
 
+        for(uint8_t i = 0; i < 4; i++) {
+            Indicators[i] = ColOff;
+        }
         // 1. Reverse
         if (this->stReverseLight) {
             Indicators[2] = ColReverse;

@@ -3,7 +3,7 @@
 #include <WiFi.h>
 #include "drivetrain.h"
 #include "captiveportal.h"
-#include "statusJSON.h"
+#include "JSONrw.h"
 
 Axle axleF(UART_NUM_1, HWConfig::Pins::UART::Front::RX, HWConfig::Pins::UART::Front::TX);
 Axle axleR(UART_NUM_2, HWConfig::Pins::UART::Rear::RX, HWConfig::Pins::UART::Rear::TX);
@@ -14,7 +14,7 @@ static const char* AP_SSID = "Adam";
 static const char* AP_PASS = "opeladam2026"; // >= 8 chars recommended
 static const char* hostname = "adam";
 CaptivePortalWeb portal;
-static char json[400];
+JSONInteraction json(400);
 
 // Example "other code" that must keep running
 static uint32_t lastBlinkMs = 0;
@@ -80,9 +80,7 @@ static void setupOTA()
   Serial.println("[OTA] Ready (AP mode)");
 
   portal.onWsMessage([](const String& msg){
-    // Minimal: just echo
-    // You’ll parse JSON here later and map to inputs/actions
-    Serial.printf("[APP] got: %s\n", msg.c_str());
+    json.DispatchCommand(msg, drive);
   });
   IPAddress apIp = WiFi.softAPIP();
   portal.begin(apIp, hostname);
@@ -113,9 +111,9 @@ void loop() {
 
     DriveTrainStatus st;
     if (drive->GetLatestStatus(st)) {
-      size_t n = EncodeStatusJson(st, json, sizeof(json));
+      size_t n = json.EncodeStatusJson(st);
       if (n > 0) {
-        portal.broadcastText(json);
+        portal.broadcastText(json.buffer);
       }
     }
   }

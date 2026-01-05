@@ -10,8 +10,11 @@
 // }
 //
 // Control from browser -> ESP:
-// { "type":"control", "enable":true,  "t":123, "s":-45 }
-// { "type":"control", "enable":false, "t":0,   "s":0 }
+// Use cmd messages:
+// { "type":"cmd", "name":"extctrl", "on":true }
+// { "type":"cmd", "name":"extctrl", "on":false }
+// { "type":"cmd", "name":"steer", "t":123, "s":-45 }
+// { "type":"cmd", "name":"steer", "t":0, "s":0 }
 //
 // Button commands from browser -> ESP:
 // { "type":"cmd", "name":"drl",   "on":true }
@@ -22,6 +25,8 @@ document.body.style.userSelect = "none"; // optional polish: no text selection a
 const wsStateEl   = document.getElementById("ws_state");
 const modeStateEl = document.getElementById("mode_state");
 const carEl       = document.getElementById("car");
+const allGears = ['N', 'D', 'R'];
+let currGearIdx = 0;
 
 // ---------- UI helpers ----------
 function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
@@ -70,82 +75,237 @@ function setManualMode(on){
   modeStateEl.textContent = "mode: " + (on ? "manual" : "ws");
 }
 
-// ---------- WebSocket ----------
-let ws = null;
+// ---------- Transport (WS or Replay) ----------
+let transport = null;
 
-function wsSend(obj){
-  if(ws && ws.readyState === WebSocket.OPEN){
-    ws.send(JSON.stringify(obj));
+function setWsState(text) {
+  wsStateEl.textContent = text;
+}
+
+function handleIncoming(evDataString) {
+  let msg;
+  try { msg = JSON.parse(evDataString); } catch { return; }
+  if (!msg || msg.type !== "status") return;
+
+  // Only update T/S from WS if not in manual override
+  if(!manualActive){
+    const t = msg.t ?? 0;
+    const s = msg.s ?? 0;
+    setNum("throttle", t); setHBar("throttle", t);
+    setNum("steering", s); setHBar("steering", s);
+  }
+
+  // Wheel torques always from WS
+  const tq = msg.torque || {};
+  setVBar("torque_fl", tq.fl ?? 0);
+  setVBar("torque_fr", tq.fr ?? 0);
+  setVBar("torque_rl", tq.rl ?? 0);
+  setVBar("torque_rr", tq.rr ?? 0);
+
+  // Wheel currents (numbers next to wheels)
+  const cu = msg.curr || {};
+  setVBar("curr_fl", cu.fl ?? 0);
+  setVBar("curr_fr", cu.fr ?? 0);
+  setVBar("curr_rl", cu.rl ?? 0);
+  setVBar("curr_rr", cu.rl ?? 0);
+
+  // Wheel velocities
+  const vel = msg.vel || {};
+  setWheelSpeed("fl", vel.fl ?? 0);
+  setWheelSpeed("fr", vel.fr ?? 0);
+  setWheelSpeed("rl", vel.rl ?? 0);
+  setWheelSpeed("rr", vel.rr ?? 0);
+
+  const boards = msg.boards || {};
+  setBoardStat("front", boards.vf, boards.tf);
+  setBoardStat("rear",  boards.vr, boards.tr);
+
+  // Lights (optional)
+  const L = msg.vehicle || {};
+  setGear("btn_gear",   L.gear);
+  setBtn("btn_high",  !!L.high);
+  setBtn("btn_ind_l", !!L.il);
+  setBtn("btn_ind_r", !!L.ir);
+}
+
+class WebSocketTransport {
+  constructor(url, { onState, onMessage }) {
+    this.url = url;
+    this.onState = onState;
+    this.onMessage = onMessage;
+    this.ws = null;
+    this._reconnectTimer = 0;
+  }
+
+  connect() {
+    this.onState?.("connecting");
+    this.ws = new WebSocket(this.url);
+
+    this.ws.onopen = () => this.onState?.("connected");
+
+    this.ws.onclose = () => {
+      this.onState?.("disconnected");
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = setTimeout(() => this.connect(), 800);
+    };
+
+    this.ws.onerror = () => {
+      try { this.ws.close(); } catch {}
+    };
+
+    this.ws.onmessage = (ev) => {
+      this.onMessage?.(ev.data);
+    };
+  }
+
+  send(obj) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(obj));
+    }
+  }
+
+  close() {
+    clearTimeout(this._reconnectTimer);
+    this._reconnectTimer = 0;
+    try { this.ws?.close(); } catch {}
   }
 }
 
-function connectWs(){
-  const url = `ws://${location.host}/ws`;
-  wsStateEl.textContent = "ws: connecting";
-  ws = new WebSocket(url);
+/**
+ * ReplayTransport plays newline-delimited JSON (NDJSON).
+ * - Each line must be one JSON object (your normal WS payload).
+ * - Delay can be fixed (e.g., 100ms) or derived from a timestamp field.
+ */
+class ReplayTransport {
+  constructor(ndjsonText, { onState, onMessage, delayMs = 100, loop = true }) {
+    this.lines = ndjsonText
+      .split(/\r?\n/)
+      .map(l => l.trim())
+      .filter(l => l && !l.startsWith("#")); // allow comments with '#'
 
-  ws.onopen = () => {
-    wsStateEl.textContent = "ws: connected";
-  };
+    this.onState = onState;
+    this.onMessage = onMessage;
 
-  ws.onclose = () => {
-    wsStateEl.textContent = "ws: disconnected";
-    setTimeout(connectWs, 800);
-  };
+    this.delayMs = delayMs;
+    this.loop = loop;
 
-  ws.onerror = () => {
-    try { ws.close(); } catch {}
-  };
+    this._i = 0;
+    this._timer = 0;
+    this._running = false;
+  }
 
-  ws.onmessage = (ev) => {
-    let msg;
-    try { msg = JSON.parse(ev.data); } catch { return; }
-    if(!msg || msg.type !== "status") return;
+  connect() {
+    this.onState?.("connected");
+    this._running = true;
+    this._scheduleNext(0);
+  }
 
-    // Only update T/S from WS if not in manual override
-    if(!manualActive){
-      const t = msg.t ?? 0;
-      const s = msg.s ?? 0;
-      setNum("throttle", t); setHBar("throttle", t);
-      setNum("steering", s); setHBar("steering", s);
+  send(_obj) {
+    // Optional: in replay mode you can ignore outgoing commands,
+    // or log them for debugging:
+    // console.log("Replay send:", _obj);
+  }
+
+  close() {
+    this._running = false;
+    clearTimeout(this._timer);
+    this._timer = 0;
+    this.onState?.("disconnected");
+  }
+
+  _scheduleNext(ms) {
+    clearTimeout(this._timer);
+    this._timer = setTimeout(() => this._tick(), ms);
+  }
+
+  _tick() {
+    if (!this._running) return;
+
+    if (this.lines.length === 0) {
+      // nothing to play
+      this._scheduleNext(500);
+      return;
     }
 
-    // Wheel torques always from WS
-    const tq = msg.torque || {};
-    setVBar("torque_fl", tq.fl ?? 0);
-    setVBar("torque_fr", tq.fr ?? 0);
-    setVBar("torque_rl", tq.rl ?? 0);
-    setVBar("torque_rr", tq.rr ?? 0);
+    if (this._i >= this.lines.length) {
+      if (!this.loop) {
+        this.close();
+        return;
+      }
+      this._i = 0;
+    }
 
-    // Wheel currents (numbers next to wheels)
-    const cu = msg.curr || {};
-    setVBar("curr_fl", cu.fl ?? 0);
-    setVBar("curr_fr", cu.fr ?? 0);
-    setVBar("curr_rl", cu.rl ?? 0);
-    setVBar("curr_rr", cu.rl ?? 0);
+    const line = this.lines[this._i++];
+    // onMessage expects a string like WebSocket's ev.data
+    this.onMessage?.(line);
 
-    // Wheel velocities 
-    const vel = msg.vel || {};
-    setWheelSpeed("fl", vel.fl ?? 0);
-    setWheelSpeed("fr", vel.fr ?? 0);
-    setWheelSpeed("rl", vel.rl ?? 0);
-    setWheelSpeed("rr", vel.rr ?? 0);
-
-    const boards = msg.boards || {};
-    setBoardStat("front", boards.vf, boards.tf);
-    setBoardStat("rear", boards.vr, boards.tr);
-
-    // Lights (optional)
-    const L = msg.vehicle || {};
-    setGear("btn_gear",   L.gear);
-    setBtn("btn_low",   !!L.low);
-    setBtn("btn_high",  !!L.high);
-    setBtn("btn_ind_l", !!L.il);
-    setBtn("btn_ind_r", !!L.ir);
-  };
+    this._scheduleNext(this.delayMs);
+  }
 }
 
-connectWs();
+// Global send helper (your existing code uses wsSend)
+function wsSend(obj){
+  transport?.send(obj);
+}
+
+// Decide mode: ?replay=1 uses replay mode (plus a file input to load the log)
+function isReplayMode() {
+  return new URLSearchParams(location.search).has("replay");
+}
+
+// Hook up replay file input from HTML (see index.html change below)
+async function setupTransport() {
+  if (isReplayMode()) {
+    setWsState("ws: replay (load file)");
+    // Wait for user to choose a file.
+    const input = document.getElementById("replay_file");
+    const delayEl = document.getElementById("replay_delay");
+
+    if (!input) {
+      setWsState("ws: replay (missing file input)");
+      return;
+    }
+
+    input.addEventListener("change", async () => {
+      const file = input.files && input.files[0];
+      if (!file) return;
+
+      const delayMs = Math.max(0, Number(delayEl?.value ?? 100) || 100);
+
+      const text = await file.text();
+      transport?.close();
+
+      console.log(`Loading replay file and replaying at ${delayMs}ms`);
+
+      transport = new ReplayTransport(text, {
+        delayMs,
+        loop: true,
+        onState: (s) => setWsState("ws: " + (s === "connected" ? "replay" : s)),
+        onMessage: handleIncoming
+      });
+
+      transport.connect();
+    });
+
+    return;
+  }
+
+  // Normal WS mode (ESP32)
+  const url = `ws://${location.host}/ws`;
+  transport = new WebSocketTransport(url, {
+    onState: (s) => {
+      if (s === "connecting") setWsState("ws: connecting");
+      else if (s === "connected") setWsState("ws: connected");
+      else if (s === "disconnected") setWsState("ws: disconnected");
+      else setWsState("ws: " + s);
+    },
+    onMessage: handleIncoming
+  });
+
+  transport.connect();
+}
+
+setupTransport();
 
 // ---------- Buttons ----------
 function setBtn(id, on){
@@ -160,6 +320,19 @@ function setGear(id, text){
   b.textContent = text;
 }
 
+function toggleGear(id){
+  const b = document.getElementById(id);
+  if(!b) return false;
+  currGearIdx = (currGearIdx + 1) % allGears.length;
+  const newGear = allGears[currGearIdx];
+  b.textContent = newGear;
+
+  console.log(`Setting gear to ${newGear}`);
+
+  return newGear;
+}
+
+
 function toggleBtn(id){
   const b = document.getElementById(id);
   if(!b) return false;
@@ -168,7 +341,7 @@ function toggleBtn(id){
 }
 
 // Send minimal commands (you can rename later)
-document.getElementById("btn_low").onclick   = () => wsSend({type:"cmd", name:"low",   on: toggleBtn("btn_low")});
+document.getElementById("btn_gear").onclick  = () => wsSend({type:"cmd", gear: toggleGear("btn_gear")});
 document.getElementById("btn_high").onclick  = () => wsSend({type:"cmd", name:"high",  on: toggleBtn("btn_high")});
 document.getElementById("btn_ind_l").onclick = () => wsSend({type:"cmd", name:"ind_l", on: toggleBtn("btn_ind_l")});
 document.getElementById("btn_ind_r").onclick = () => wsSend({type:"cmd", name:"ind_r", on: toggleBtn("btn_ind_r")});
@@ -223,7 +396,7 @@ function startManual(){
     lastSentT = manualT;
     lastSentS = manualS;
 
-    wsSend({ type:"control", enable:true, t:manualT, s:manualS });
+    wsSend({ type:"cmd", name:"steer", t:manualT, s:manualS });
   }, 40); // ~25 Hz
 }
 
@@ -239,7 +412,7 @@ function stopManual(){
   lastSentS = 99999;
 
   // stop command
-  wsSend({ type:"control", enable:false, t:0, s:0 });
+  wsSend({ type:"cmd", name:"steer", t:0, s:0 });
 }
 
 function setWheelCurr(id, v){
@@ -253,11 +426,17 @@ function setWheelSpeed(id, v){
 }
 
 
-function setBoardStat(id, volts, tempC){
+function setBoardStat(id, volts, tempC) {
+  volts = Number(volts);
+  tempC = Number(tempC);
+
+  if (!Number.isFinite(volts) || !Number.isFinite(tempC)) return;
+
   const elV = document.getElementById("volt_" + id);
   const elT = document.getElementById("temp_" + id);
-  if(elV) elV.textContent = String((volts / 100).toFixed(2) | 0) + ' V';
-  if(elT) elT.textContent = String((tempC / 10).toFixed(1) | 0) + ' ºC';
+
+  if (elV) elV.textContent = (volts / 100).toFixed(1) + " V";
+  if (elT) elT.textContent = (tempC / 10).toFixed(1) + " ºC";
 }
 
 // Start manual mode when pressing on the car

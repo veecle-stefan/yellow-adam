@@ -29,8 +29,8 @@ public:
     enum IndicatorPosition : uint8_t {
         FR = 0,
         FL = 1,
-        RR = 2,
-        RL = 3
+        RL = 2,
+        RR = 3
     };
 
     Lights();
