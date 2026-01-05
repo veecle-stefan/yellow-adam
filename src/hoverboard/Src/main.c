@@ -575,7 +575,7 @@ int main(void) {
       beepCount(0, 5, 1);
       backwardDrive = 1;
     } else if (commandBeep > 0) {
-      beepCount(0, 10, commandBeep);
+      beepCount(0, commandBeep, 0);
     } else {  // do not beep
       beepCount(0, 0, 0);
       backwardDrive = 0;

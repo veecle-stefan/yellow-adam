@@ -10,6 +10,7 @@
 namespace DriveConfig {
     static constexpr int16_t DeadBand = 50;
     static constexpr uint32_t MaxUserIdleBeforeShutdown = 600000; // 600s = 10min
+    static constexpr uint32_t MaxUserIdleWarn = 550000; // 30s before shutdown
 
     // Brakes / tap logic
     namespace Brakes {
@@ -28,6 +29,9 @@ namespace DriveConfig {
     }
 
     namespace TV { // Torque Vectoring
+
+        static constexpr int16_t MaxWheelSpeed = 500;
+
         // Maximum allowed change of steering-related torque per control tick,
         // expressed as a fraction of MaxOutputLimit.
         // Limits how fast torque steer / yaw assist can ramp to avoid mechanical shocks.
@@ -111,12 +115,17 @@ namespace DriveConfig {
         // ABS/ASR behavior at standstill or very low speeds.
         static constexpr float SlipSpeedEps = 10.f;
 
+        // fraction of maxT; ignore slip logic below this torque magnitude
+        static constexpr float SlipTorqueEps = 0.05f;
+
         // torque distribution between front and rear under acceleration and braking
         static constexpr float DriveFrontShareLow  = 0.55f;
         static constexpr float DriveFrontShareHigh = 0.30f;
         static constexpr float BrakeFrontShareLow  = 0.60f;
         static constexpr float BrakeFrontShareHigh = 0.80f;
         static constexpr float BiasHighThrottle    = 0.6f;   // |throttle|/maxT where high share is reached
+
+        
     }
 }
 
@@ -198,7 +207,7 @@ protected:
 
     struct TickDecision {
         Torques torques{};
-        Axle::RemoteCommand cmd = Axle::RemoteCommand::CmdNOP;
+        uint8_t cmd = Axle::RemoteCommand::CmdNOP;
 
         // “Intent” for outputs besides motors
         bool failSafe = false;
@@ -227,7 +236,7 @@ protected:
 
     // ----- Pipeline -----
     TickContext  BuildContext(uint32_t nowMs);
-    TickDecision ComputeDecision(const TickContext& ctx, VehicleState& state);
+    TickDecision ComputeDecision(const TickContext &ctx, VehicleState &state);
     void         ApplyDecision(const TickDecision& dec, VehicleState& state);
     void         CheckGear(const TickContext& ctx, VehicleState& state);
 
@@ -235,7 +244,7 @@ protected:
     void PublishStatus(const TickContext& ctx, const TickDecision& dec, const VehicleState& state);
 
     static UserCmd     ReadUserCmd(UserInput ch1, UserInput ch2, UserInput ch3, uint32_t nowMs);
-    static Axle::RemoteCommand ControllerSafety(const TickContext& ctx, const VehicleState& state);
+    static uint8_t ControllerSafety(const TickContext& ctx, const VehicleState& state);
     static void        ComputeLights(const TickContext& ctx, TickDecision& dec,  VehicleState& state);
 
     static Torques     TorqueVectoring(const TickContext& ctx, const VehicleState& state); // no out-params

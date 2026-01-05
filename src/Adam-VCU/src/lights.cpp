@@ -70,9 +70,8 @@ void Lights::SetOTAprogress(uint8_t percent)
 
 void Lights::UpdateLights()
 {
-    static uint8_t knightRider = 0;
     // take all the current states and generate LED patterns
-
+    static bool OTAblink = false;
     if (stOTA) {
         // indicators off
         for(uint8_t i = 0; i < 4; i++) {
@@ -84,13 +83,25 @@ void Lights::UpdateLights()
         }
         // use headlights as percent indicator in purple
         for(uint8_t h = 0; h < HWConfig::Sizes::LEDs::NumHeadlights; h++) {
-            HeadLights[h] = h * 100 / HWConfig::Sizes::LEDs::NumHeadlights <= this->OTAprogress ? ColOTA : ColOff;
+            HeadLights[h] = h * 100 / HWConfig::Sizes::LEDs::NumHeadlights <= this->OTAprogress ? ColOTA1 : ColOff;
         }
+        // color the last LED
+        if (OTAblink) {
+            HeadLights[this->OTAprogress * HWConfig::Sizes::LEDs::NumHeadlights / 100] = ColOTA2;
+        }
+        OTAblink = !OTAblink;
     } else {
 
-        // 1. indicators
+        // 1. Reverse
+        if (this->stReverseLight) {
+            Indicators[2] = ColReverse;
+            Indicators[3] = ColReverse;
+        }
+        // 1. indicators (overwrite reverse light)
         for(uint8_t i = 0; i < 4; i++) {
-            Indicators[i] = this->stIndicators[i] && this->internalBlinkPhase ? ColIndicator : ColOff;
+            if (this->stIndicators[i]) {
+                Indicators[i] = this->internalBlinkPhase ? ColIndicator : ColOff;
+            }
         }
 
         // 2. tail lights
@@ -101,11 +112,6 @@ void Lights::UpdateLights()
             TailLights[0] = TailLights[HWConfig::Sizes::LEDs::NumTaillights-1] = ColBrake;
             TailLights[1] = TailLights[HWConfig::Sizes::LEDs::NumTaillights-2] = ColBrake;
             TailLights[2] = TailLights[HWConfig::Sizes::LEDs::NumTaillights-3] = ColBrake;
-        }
-
-        if (this->stReverseLight) {
-            TailLights[knightRider] = TailLights[HWConfig::Sizes::LEDs::NumTaillights-1-knightRider] = ColOff;
-            knightRider = (knightRider + 1) % (HWConfig::Sizes::LEDs::NumTaillights / 2);
         }
 
         // 3. Head lights
@@ -122,7 +128,7 @@ void Lights::UpdateLights()
                 HeadLights[4] = HeadLights[9] = ColDRL;
                 HeadLights[5] = HeadLights[8] = ColDRL;
                 HeadLights[6] = HeadLights[7] = ColDRL;
-            break;
+                break;
             case Dipped:
                 HeadLights[0] = HeadLights[13] = ColLoBeam;
                 HeadLights[1] = HeadLights[12] = ColLoBeam;

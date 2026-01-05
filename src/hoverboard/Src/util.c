@@ -865,17 +865,20 @@ void readInputRaw(void) {
       #else
         input1[inIdx].raw = commandL.steer;
         input2[inIdx].raw = commandL.speed;
-          // check command
-        switch (commandL.cmd) {
-          case CmdBeep:
-            commandBeep = 1;
-            break;
-          case CmdPowerOff:
-            poweroff();
-            break;
-          case CmdNOP:
-            commandBeep = 0;
-            break;
+          
+        // is it a beep or should we ignore?
+        if (commandL.cmd >= CmdBeep) {
+          commandBeep = 30 - (commandL.cmd - CmdBeep);
+        } else {
+          commandBeep = 0;
+          switch (commandL.cmd) {
+            case CmdPowerOff:
+              poweroff();
+              break;
+            case CmdNOP:
+              commandBeep = 0;
+              break;
+          }
         }
       #endif
     }

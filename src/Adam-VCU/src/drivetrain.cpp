@@ -132,13 +132,23 @@ DriveTrain::TickContext DriveTrain::BuildContext(uint32_t nowMs)
     return ctx;
 }
 
-Axle::RemoteCommand DriveTrain::ControllerSafety(const TickContext& ctx, const VehicleState& state)
+uint8_t DriveTrain::ControllerSafety(const TickContext& ctx, const VehicleState& state)
 {
-    Axle::RemoteCommand cmd = Axle::RemoteCommand::CmdNOP;
+    uint8_t cmd = Axle::RemoteCommand::CmdNOP;
 
     // 1. Check for global timeout
-    if (ctx.nowMs - state.lastUserInput > DriveConfig::MaxUserIdleBeforeShutdown) {
+    uint32_t timeUserIdle = ctx.nowMs - state.lastUserInput;
+    if (timeUserIdle > DriveConfig::MaxUserIdleBeforeShutdown) {
         cmd = Axle::RemoteCommand::CmdPowerOff;
+    }
+    if (timeUserIdle > DriveConfig::MaxUserIdleWarn) {
+        // make a tick tock noise
+        uint32_t timeUserIdleTens = timeUserIdle / 100;
+        if (timeUserIdleTens % 10 == 0) {
+            cmd = Axle::RemoteCommand::CmdBeep;
+        } else if (timeUserIdleTens % 10 == 5) {
+            cmd = Axle::RemoteCommand::CmdBeep + (uint8_t)10;
+        }
     }
 
     // 2. Check for motor controller emergency
@@ -437,11 +447,12 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, const Ve
         const float lo = vRefLocal * (1.f - DriveConfig::TV::SlipRatio);
 
         bool slip = false;
+        const float te = DriveConfig::TV::SlipTorqueEps * maxT;
 
-        if (wheelTorqueCmd > 0.f) {
+        if (wheelTorqueCmd > te) {
             // ASR: wheel spins faster than the other wheels under positive torque
             if (v[idx] > hi) slip = true;
-        } else if (wheelTorqueCmd < 0.f) {
+        } else if (wheelTorqueCmd < -te) {
             // ABS: wheel becomes much slower than the other wheels under negative torque
             if (v[idx] < lo) slip = true;
         }

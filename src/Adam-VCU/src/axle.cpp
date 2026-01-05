@@ -78,7 +78,7 @@ void Axle::Shutdown()
 
 
 
-void Axle::SendInternal(int16_t motL, int16_t motR, RemoteCommand remoteCmd)
+void Axle::SendInternal(int16_t motL, int16_t motR, uint8_t remoteCmd)
 {
     SerialCommand command;
     // Create command
@@ -94,11 +94,11 @@ void Axle::SendInternal(int16_t motL, int16_t motR, RemoteCommand remoteCmd)
 
 
 // Push latest command into size-1 queue
-bool Axle::Send(int16_t motL, int16_t motR, RemoteCommand func)
+bool Axle::Send(int16_t motL, int16_t motR, uint8_t cmd)
 {
-    MotorCommand cmd{motL, motR, func};
+    MotorCommand packet{motL, motR, cmd};
     // Overwrite last command, never blocks
-    BaseType_t res = xQueueOverwrite(commandQueue, &cmd);
+    BaseType_t res = xQueueOverwrite(commandQueue, &packet);
     return (res == pdPASS);
 }
 
@@ -156,8 +156,6 @@ uint8_t Axle::ProcessFeedbackFrame(uint8_t* buffer, size_t len)
         );
 
         if (packet.start == StartFrame && checksum == packet.checksum) {
-            // FIXME: Temporary fix before sign firmware update
-            packet.speedR_meas = -packet.speedR_meas;
             PushFeedback(packet);  // just hand it to the queue
             return static_cast<uint8_t>(skipped + sizeof(SerialFeedback));
         }

@@ -37,8 +37,8 @@
   #else
     typedef enum {
       CmdNOP = 0,
-      CmdBeep = 1,
-      CmdPowerOff = 2
+      CmdPowerOff = 1,
+      CmdBeep = 230,
     } RemoteCommand;
     typedef struct{
       uint16_t  start;
