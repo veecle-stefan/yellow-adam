@@ -224,7 +224,7 @@ protected:
         int16_t aux      = 0;
         bool    detected = false;
         bool    someInput = false;
-        bool    auxSign   = false;
+        bool    auxPressed = false;
         bool    doubleTap = false;
     };
 

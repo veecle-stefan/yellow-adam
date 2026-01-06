@@ -8,10 +8,143 @@ document.body.style.userSelect = "none";
 
 const wsStateEl   = document.getElementById("ws_state");
 const modeStateEl = document.getElementById("mode_state");
-const padEl       = document.getElementById("drivepad");
+const padEl       = document.getElementById("drivePad");
+
+let padActive = false;
+let padOriginX = 0;
+let padOriginY = 0;
+let originSet = false;
+let lastT = 0;
+let lastS = 0;
 
 const allGears = ['N', 'D', 'R'];
 let currGearIdx = 0;
+
+// ---------- External control (runtime-only; no persistence) ----------
+let extCtrlActive = false;
+
+// NEW header buttons
+const btnTake = document.getElementById("btn_take_control");
+const btnStop = document.getElementById("btn_stop_control");
+
+// OLD buttons may still exist in HTML; force-hide them to avoid duplicates
+const legacyTake = document.getElementById("btn_extctrl");
+const legacyStop = document.getElementById("btn_extctrl_stop");
+if (legacyTake) legacyTake.style.display = "none";
+if (legacyStop) legacyStop.style.display = "none";
+
+function setExtCtrlUI(active){
+  extCtrlActive = !!active;
+
+  // Show exactly one of the two header buttons
+  if (btnTake) btnTake.style.display = extCtrlActive ? "none" : "inline-block";
+  if (btnStop) btnStop.style.display = extCtrlActive ? "inline-block" : "none";
+
+  // Optional: a body class if you want CSS changes when active
+  document.body.classList.toggle("extctrl", extCtrlActive);
+}
+
+function setExtCtrl(active, { send = true } = {}){
+  setExtCtrlUI(active);
+
+  if(send){
+    wsSend({ type:"cmd", name:"extctrl", on: extCtrlActive });
+  }
+
+  // Safety: when stopping control, stop joystick + send steer=0 immediately.
+  if(!extCtrlActive){
+    if(manualActive) stopManual();
+    else wsSend({ type:"cmd", name:"steer", t:0, s:0 });
+  }
+}
+
+btnTake?.addEventListener("click", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  setExtCtrl(true);
+});
+
+btnStop?.addEventListener("click", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  setExtCtrl(false);
+});
+
+// Default: control OFF on page load
+setExtCtrlUI(false);
+
+// ---------- Limit profiles ----------
+const profiles = [
+  { name:"Kids",     maxThrottle:250,  maxSpeed:150 },
+  { name:"Advanced", maxThrottle:400,  maxSpeed:300 },
+  { name:"Mad Max",  maxThrottle:1000, maxSpeed:500 },
+];
+
+const limitProfileEl  = document.getElementById("limit_profile");
+const limitThrottleEl = document.getElementById("limit_throttle");
+const limitSpeedEl    = document.getElementById("limit_speed");
+const limitThrottleOut= document.getElementById("limit_throttle_out");
+const limitSpeedOut   = document.getElementById("limit_speed_out");
+const btnSendLimits   = document.getElementById("btn_send_limits");
+
+function updateLimitOutputs(){
+  if(limitThrottleOut && limitThrottleEl) limitThrottleOut.textContent = String(Number(limitThrottleEl.value) | 0);
+  if(limitSpeedOut && limitSpeedEl) limitSpeedOut.textContent = String(Number(limitSpeedEl.value) | 0);
+}
+
+function applyProfile(p){
+  if(!p) return;
+  if(limitThrottleEl) limitThrottleEl.value = String(p.maxThrottle);
+  if(limitSpeedEl) limitSpeedEl.value = String(p.maxSpeed);
+  updateLimitOutputs();
+}
+
+function initProfilesUI(){
+  if(!limitProfileEl) return;
+  // Add "Custom" first
+  limitProfileEl.innerHTML = "";
+  const opt0 = document.createElement("option");
+  opt0.value = "__custom__";
+  opt0.textContent = "Custom";
+  limitProfileEl.appendChild(opt0);
+
+  for(const p of profiles){
+    const opt = document.createElement("option");
+    opt.value = p.name;
+    opt.textContent = p.name;
+    limitProfileEl.appendChild(opt);
+  }
+
+  // Default profile: Kids
+  limitProfileEl.value = profiles[0]?.name ?? "__custom__";
+  applyProfile(profiles[0]);
+
+  limitProfileEl.addEventListener("change", () => {
+    const sel = limitProfileEl.value;
+    const p = profiles.find(x => x.name === sel);
+    if(p) applyProfile(p);
+  });
+
+  const onManualChange = () => {
+    // When user drags sliders, treat as "Custom"
+    if(limitProfileEl.value !== "__custom__"){
+      limitProfileEl.value = "__custom__";
+    }
+    updateLimitOutputs();
+  };
+
+  limitThrottleEl?.addEventListener("input", onManualChange);
+  limitSpeedEl?.addEventListener("input", onManualChange);
+  updateLimitOutputs();
+
+  btnSendLimits?.addEventListener("click", () => {
+    const mt = Math.max(50, Math.min(1000, Number(limitThrottleEl?.value ?? 0) || 0));
+    const ms = Math.max(20, Math.min(500,  Number(limitSpeedEl?.value ?? 0) || 0));
+    wsSend({ type:"cmd", name:"limit", maxThrottle: mt|0, maxSpeed: ms|0 });
+  });
+}
+
+initProfilesUI();
 
 // ---------- UI helpers ----------
 function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
@@ -335,7 +468,7 @@ class ReplayTransport {
 
 function wsSend(obj){ 
   transport?.send(obj);
-  console.log(obj);
+  console.log(JSON.stringify(obj));
 }
 
 function isReplayMode() {
@@ -505,29 +638,66 @@ function stopManual(){
   wsSend({ type:"cmd", name:"steer", t:0, s:0 });
 }
 
+function computeTSFromDelta(dx, dy){
+  const rect = padEl.getBoundingClientRect();
+  const r = Math.max(40, Math.min(rect.width, rect.height) * 0.45);
+
+  // dx: right = +steer, dy: down = + so invert for throttle
+  let nx = dx / r;
+  let ny = -dy / r;
+
+  // clamp [-1..1]
+  nx = Math.max(-1, Math.min(1, nx));
+  ny = Math.max(-1, Math.min(1, ny));
+
+  // deadband makes "near zero" easy
+  const db = 0.06;
+  if (Math.abs(nx) < db) nx = 0;
+  if (Math.abs(ny) < db) ny = 0;
+
+  // map to your integer domain [-1000..1000]
+  const s = Math.round(nx * 1000);
+  const t = Math.round(ny * 1000);
+
+  return { t, s };
+}
+
 padEl.addEventListener("pointerdown", (e) => {
+  if(!extCtrlActive) return;
   e.preventDefault();
-  const {t, s} = computeTSFromPointer(e.clientX, e.clientY);
-  applyManual(t, s);
+
+  // IMPORTANT: capture the pointer so moves keep coming even if leaving the pad
+  try { padEl.setPointerCapture(e.pointerId); } catch {}
+
+  // Set origin, do NOT apply torque/steer yet (prevents dangerous jump)
+  padOriginX = e.clientX;
+  padOriginY = e.clientY;
+  originSet = true;
+
+  applyManual(0, 0);
   startManual();
 });
 
 window.addEventListener("pointermove", (e) => {
   if(!manualActive) return;
   e.preventDefault();
-  const {t, s} = computeTSFromPointer(e.clientX, e.clientY);
+  if(!originSet) return;
+
+  const {t, s} = computeTSFromDelta(e.clientX - padOriginX, e.clientY - padOriginY);
   applyManual(t, s);
 });
 
 window.addEventListener("pointerup", (e) => {
   if(!manualActive) return;
   e.preventDefault();
+  originSet = false;
   stopManual();
 });
 
 window.addEventListener("pointercancel", (e) => {
   if(!manualActive) return;
   e.preventDefault();
+  originSet = false;
   stopManual();
 });
 

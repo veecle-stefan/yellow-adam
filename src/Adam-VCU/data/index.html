@@ -1,10 +1,11 @@
-<!doctype html>
+<!DOCTYPE html>
+
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Vehicle Controller</title>
-  <style>
+<meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+<title>Vehicle Controller</title>
+<style>
     :root{
       --bg:#0b0c10; --fg:#e9ecf1; --muted:#8a93a6; --line:#20263a;
       --card:#111526; --card2:#0e1220;
@@ -75,6 +76,18 @@
                touch-action:none; user-select:none; }
     body.manual .drivepad{ border-style:solid; border-color:rgba(34,197,94,0.45); color:rgba(233,236,241,0.85); }
 
+    .drivePadHeader{
+      display:flex;
+      gap:10px;
+      align-items:center;
+      justify-content:center;
+      flex-wrap:wrap;
+      margin-bottom:10px;
+    }
+    .drivePadHeader .padHint{
+      font-size: 12px;
+      opacity: 0.75;
+    }
     /* ---- Buttons ---- */
     .btns{ display:grid; grid-template-columns: repeat(5, 1fr); gap:8px; }
     button{ appearance:none; border:1px solid var(--line); background:transparent; color:var(--fg);
@@ -89,122 +102,231 @@
       .wheelRow{ grid-template-columns:1fr; }
       .chartWrap{ height:155px; }
     }
-  </style>
+  
+    /* ---- External control gate ---- */
+    body.extctrl .drivepad{
+      border-style: solid;
+      border-color: rgba(245,158,11,0.45);
+      color: rgba(233,236,241,0.90);
+    }
+    .drivepad{
+      position: relative;
+      min-height: 96px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }
+    .drivepad .padHint{ font-size:12px; font-weight:900; color:rgba(138,147,166,0.78); }
+    .drivepad .padActive{ display:none; }
+    body.extctrl .drivepad .padActive{ display:block; }
+    body.extctrl .drivepad .padIdle{ display:none; }
+
+    .drivepad button{
+      padding: 10px 14px;
+      font-size: 14px;
+      font-weight: 900;
+      border-radius: 14px;
+    }
+    .drivepad button.primary{
+      background: rgba(245,158,11,0.18);
+      border-color: rgba(245,158,11,0.55);
+    }
+
+    /* ---- Limits panel ---- */
+    details.limits{
+      border:1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255,255,255,0.02);
+      overflow: hidden;
+    }
+    details.limits > summary{
+      list-style:none;
+      cursor:pointer;
+      padding: 12px 14px;
+      font-weight: 1000;
+      color: rgba(233,236,241,0.92);
+      display:flex;
+      align-items:center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    details.limits > summary::-webkit-details-marker{ display:none; }
+    details.limits > summary::after{
+      content: "▾";
+      color: rgba(138,147,166,0.9);
+      font-weight: 1000;
+    }
+    details.limits[open] > summary::after{ content: "▴"; }
+    .limitsBody{ padding: 12px 14px 14px; border-top:1px solid var(--line); display:flex; flex-direction:column; gap: 12px; }
+    .lrow{ display:grid; grid-template-columns: 110px 1fr auto; gap: 10px; align-items:center; }
+    .lrow label{ color: rgba(138,147,166,0.9); font-weight: 900; }
+    .lrow .out{ font-variant-numeric: tabular-nums; font-weight: 1000; color: rgba(233,236,241,0.92); min-width: 56px; text-align:right; }
+    .lrow select, .lrow input[type="number"]{
+      width: 100%;
+      padding: 8px 10px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: rgba(0,0,0,0.35);
+      color: var(--fg);
+      font-weight: 900;
+    }
+    .lrow input[type="range"]{ width: 100%; }
+    .limitsActions{ display:flex; justify-content:flex-end; gap:10px; }
+    .limitsActions button{
+      padding: 10px 14px;
+      font-size: 14px;
+      font-weight: 900;
+      border-radius: 14px;
+    }
+    .limitsActions button.primary{
+      background: rgba(59,130,246,0.18);
+      border-color: rgba(59,130,246,0.55);
+    }
+</style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="inputs">
-      <div class="ibox">
-        <div class="ihead"><span class="tag">Throttle</span><span class="num" id="val_throttle">0</span></div>
-        <div class="hbar" data-id="throttle" data-min="-1000" data-max="1000"><div class="neg"></div><div class="pos"></div><div class="mid"></div></div>
-      </div>
-      <div class="ibox">
-        <div class="ihead"><span class="tag">Steering</span><span class="num" id="val_steering">0</span></div>
-        <div class="hbar" data-id="steering" data-min="-1000" data-max="1000"><div class="neg"></div><div class="pos"></div><div class="mid"></div></div>
-      </div>
-    </div>
-
-    <div class="drivepad" id="drivepad">touch + drag to drive</div>
-
-    <section class="axle" id="axle_front">
-      <div class="axleHead">
-        <div class="axleTitle">FRONT</div>
-        <div class="axleMetrics">
-          <div class="metric"><span class="v" id="volt_front">--.-</span><span class="u">V</span></div>
-          <div class="metric"><span class="v" id="temp_front">--.-</span><span class="u">°C</span></div>
-        </div>
-      </div>
-      <div class="wheelRow">
-        <div class="wheelCard">
-          <div class="wheelCardInner">
-            <div class="chartWrap">
-              <canvas class="spark" id="spark_fl"></canvas>
-              <div class="ov tq"><div class="val tq" id="tq_fl">-- Nm</div><div class="lbl">Torque</div></div>
-              <div class="ov cu"><div class="val cu" id="cu_fl">-- A</div><div class="lbl">Current</div></div>
-              <div class="ov rpm"><div class="val rpm" id="rpm_fl">-- rpm</div><div class="lbl">RPM</div></div>
-            </div>
-            <div class="wheelName"><div class="name">Front Left</div><div class="hint">FL</div></div>
-          </div>
-        </div>
-        <div class="wheelCard">
-          <div class="wheelCardInner">
-            <div class="chartWrap">
-              <canvas class="spark" id="spark_fr"></canvas>
-              <div class="ov tq"><div class="val tq" id="tq_fr">-- Nm</div><div class="lbl">Torque</div></div>
-              <div class="ov cu"><div class="val cu" id="cu_fr">-- A</div><div class="lbl">Current</div></div>
-              <div class="ov rpm"><div class="val rpm" id="rpm_fr">-- rpm</div><div class="lbl">RPM</div></div>
-            </div>
-            <div class="wheelName"><div class="name">Front Right</div><div class="hint">FR</div></div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section class="axle" id="axle_rear">
-      <div class="axleHead">
-        <div class="axleTitle">REAR</div>
-        <div class="axleMetrics">
-          <div class="metric"><span class="v" id="volt_rear">--.-</span><span class="u">V</span></div>
-          <div class="metric"><span class="v" id="temp_rear">--.-</span><span class="u">°C</span></div>
-        </div>
-      </div>
-      <div class="wheelRow">
-        <div class="wheelCard">
-          <div class="wheelCardInner">
-            <div class="chartWrap">
-              <canvas class="spark" id="spark_rl"></canvas>
-              <div class="ov tq"><div class="val tq" id="tq_rl">-- Nm</div><div class="lbl">Torque</div></div>
-              <div class="ov cu"><div class="val cu" id="cu_rl">-- A</div><div class="lbl">Current</div></div>
-              <div class="ov rpm"><div class="val rpm" id="rpm_rl">-- rpm</div><div class="lbl">RPM</div></div>
-            </div>
-            <div class="wheelName"><div class="name">Rear Left</div><div class="hint">RL</div></div>
-          </div>
-        </div>
-        <div class="wheelCard">
-          <div class="wheelCardInner">
-            <div class="chartWrap">
-              <canvas class="spark" id="spark_rr"></canvas>
-              <div class="ov tq"><div class="val tq" id="tq_rr">-- Nm</div><div class="lbl">Torque</div></div>
-              <div class="ov cu"><div class="val cu" id="cu_rr">-- A</div><div class="lbl">Current</div></div>
-              <div class="ov rpm"><div class="val rpm" id="rpm_rr">-- rpm</div><div class="lbl">RPM</div></div>
-            </div>
-            <div class="wheelName"><div class="name">Rear Right</div><div class="hint">RR</div></div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <div class="btns">
-      <button id="btn_gear"   type="button" title="N">N</button>
-      <button id="btn_high"  type="button" title="High">🔦</button>
-      <button id="btn_ind_l" type="button" title="Left">⬅️</button>
-      <button id="btn_ind_r" type="button" title="Right">➡️</button>
-      <button id="btn_dump"  type="button" title="Dump history">⬇️</button>
-    </div>
-
-    <div class="foot">
-      <div class="pill" id="ws_state">ws: ...</div>
-      <div class="pill" id="mode_state">mode: ws</div>
-    </div>
+<div class="wrap">
+<div class="inputs">
+<div class="ibox">
+<div class="ihead"><span class="tag">Throttle</span><span class="num" id="val_throttle">0</span></div>
+<div class="hbar" data-id="throttle" data-max="1000" data-min="-1000"><div class="neg"></div><div class="pos"></div><div class="mid"></div></div>
+</div>
+<div class="ibox">
+<div class="ihead"><span class="tag">Steering</span><span class="num" id="val_steering">0</span></div>
+<div class="hbar" data-id="steering" data-max="1000" data-min="-1000"><div class="neg"></div><div class="pos"></div><div class="mid"></div></div>
+</div>
+</div>
+<div class="drivePadWrap">
+  <div class="drivePadHeader">
+    <button id="btn_take_control" class="btnPrimary" type="button">Take control</button>
+    <button id="btn_stop_control" class="btnDanger" type="button" style="display:none;">Stop control</button>
+    <div class="padHint" id="pad_hint">Enables joystick control (touch + drag)</div>
   </div>
 
-  <!-- Replay controls only used when opened with ?replay=1 -->
-  <div id="replay_controls" style="display:none; gap:8px; align-items:center; color:#8a93a6; font-size:12px; padding:0 12px 12px;">
-    <span class="pill">replay</span>
-    <input id="replay_file" type="file" accept=".ndjson,.jsonl,.txt,.log" />
-    <label>
+  <div id="drivePad" class="drivepad"></div>
+</div>
+</div>
+<section class="axle" id="axle_front">
+<div class="axleHead">
+<div class="axleTitle">FRONT</div>
+<div class="axleMetrics">
+<div class="metric"><span class="v" id="volt_front">--.-</span><span class="u">V</span></div>
+<div class="metric"><span class="v" id="temp_front">--.-</span><span class="u">°C</span></div>
+</div>
+</div>
+<div class="wheelRow">
+<div class="wheelCard">
+<div class="wheelCardInner">
+<div class="chartWrap">
+<canvas class="spark" id="spark_fl"></canvas>
+<div class="ov tq"><div class="val tq" id="tq_fl">-- Nm</div><div class="lbl">Torque</div></div>
+<div class="ov cu"><div class="val cu" id="cu_fl">-- A</div><div class="lbl">Current</div></div>
+<div class="ov rpm"><div class="val rpm" id="rpm_fl">-- rpm</div><div class="lbl">RPM</div></div>
+</div>
+<div class="wheelName"><div class="name">Front Left</div><div class="hint">FL</div></div>
+</div>
+</div>
+<div class="wheelCard">
+<div class="wheelCardInner">
+<div class="chartWrap">
+<canvas class="spark" id="spark_fr"></canvas>
+<div class="ov tq"><div class="val tq" id="tq_fr">-- Nm</div><div class="lbl">Torque</div></div>
+<div class="ov cu"><div class="val cu" id="cu_fr">-- A</div><div class="lbl">Current</div></div>
+<div class="ov rpm"><div class="val rpm" id="rpm_fr">-- rpm</div><div class="lbl">RPM</div></div>
+</div>
+<div class="wheelName"><div class="name">Front Right</div><div class="hint">FR</div></div>
+</div>
+</div>
+</div>
+</section>
+<section class="axle" id="axle_rear">
+<div class="axleHead">
+<div class="axleTitle">REAR</div>
+<div class="axleMetrics">
+<div class="metric"><span class="v" id="volt_rear">--.-</span><span class="u">V</span></div>
+<div class="metric"><span class="v" id="temp_rear">--.-</span><span class="u">°C</span></div>
+</div>
+</div>
+<div class="wheelRow">
+<div class="wheelCard">
+<div class="wheelCardInner">
+<div class="chartWrap">
+<canvas class="spark" id="spark_rl"></canvas>
+<div class="ov tq"><div class="val tq" id="tq_rl">-- Nm</div><div class="lbl">Torque</div></div>
+<div class="ov cu"><div class="val cu" id="cu_rl">-- A</div><div class="lbl">Current</div></div>
+<div class="ov rpm"><div class="val rpm" id="rpm_rl">-- rpm</div><div class="lbl">RPM</div></div>
+</div>
+<div class="wheelName"><div class="name">Rear Left</div><div class="hint">RL</div></div>
+</div>
+</div>
+<div class="wheelCard">
+<div class="wheelCardInner">
+<div class="chartWrap">
+<canvas class="spark" id="spark_rr"></canvas>
+<div class="ov tq"><div class="val tq" id="tq_rr">-- Nm</div><div class="lbl">Torque</div></div>
+<div class="ov cu"><div class="val cu" id="cu_rr">-- A</div><div class="lbl">Current</div></div>
+<div class="ov rpm"><div class="val rpm" id="rpm_rr">-- rpm</div><div class="lbl">RPM</div></div>
+</div>
+<div class="wheelName"><div class="name">Rear Right</div><div class="hint">RR</div></div>
+</div>
+</div>
+</div>
+</section>
+<div class="btns">
+<button id="btn_gear" title="N" type="button">N</button>
+<button id="btn_high" title="High" type="button">🔦</button>
+<button id="btn_ind_l" title="Left" type="button">⬅️</button>
+<button id="btn_ind_r" title="Right" type="button">➡️</button>
+<button id="btn_dump" title="Dump history" type="button">⬇️</button>
+</div>
+
+<details class="limits" id="limits_panel">
+<summary>
+<span>Limits</span>
+<span style="color:rgba(138,147,166,0.9); font-weight:900; font-size:12px;">max throttle + speed</span>
+</summary>
+<div class="limitsBody">
+<div class="lrow" style="grid-template-columns:110px 1fr;">
+<label for="limit_profile">Profile</label>
+<select id="limit_profile"></select>
+</div>
+<div class="lrow">
+<label for="limit_throttle">Throttle</label>
+<input id="limit_throttle" max="1000" min="50" type="range" value="250"/>
+<span class="out" id="limit_throttle_out">250</span>
+</div>
+<div class="lrow">
+<label for="limit_speed">Speed</label>
+<input id="limit_speed" max="500" min="20" type="range" value="150"/>
+<span class="out" id="limit_speed_out">150</span>
+</div>
+<div class="limitsActions">
+<button class="primary" id="btn_send_limits" type="button">Send limits</button>
+</div>
+</div>
+</details>
+<div class="foot">
+<div class="pill" id="ws_state">ws: ...</div>
+<div class="pill" id="mode_state">mode: ws</div>
+</div>
+</div>
+<!-- Replay controls only used when opened with ?replay=1 -->
+<div id="replay_controls" style="display:none; gap:8px; align-items:center; color:#8a93a6; font-size:12px; padding:0 12px 12px;">
+<span class="pill">replay</span>
+<input accept=".ndjson,.jsonl,.txt,.log" id="replay_file" type="file"/>
+<label>
       delay ms:
-      <input id="replay_delay" type="number" value="100" min="0" style="width:80px;" />
-    </label>
-  </div>
-
-  <script>
+      <input id="replay_delay" min="0" style="width:80px;" type="number" value="100"/>
+</label>
+</div>
+<script>
     if (new URLSearchParams(location.search).has("replay")) {
       const el = document.getElementById("replay_controls");
       if (el) el.style.display = "flex";
     }
   </script>
-
-  <script src="app.js"></script>
+<script src="app.js"></script>
 </body>
 </html>

@@ -118,6 +118,7 @@ DriveTrain::UserCmd DriveTrain::ReadUserCmd(RCinput::UserInput ch1, RCinput::Use
     static uint32_t lastTap  = 0;
     static bool     isTapping = false;
     static uint8_t  tapCount  = 0;
+    static bool lastAuxSign = false;
 
     UserCmd u{};
 
@@ -141,7 +142,11 @@ DriveTrain::UserCmd DriveTrain::ReadUserCmd(RCinput::UserInput ch1, RCinput::Use
         u.detected = true;
 
         u.someInput = (abs(u.throttle) > DriveConfig::DeadBand) || (abs(u.steering) > DriveConfig::DeadBand);
-        u.auxSign = u.aux > DriveConfig::DeadBand;
+        bool auxSign = u.aux > DriveConfig::DeadBand;
+        if (auxSign != lastAuxSign) {
+            u.auxPressed = true; // only this tick
+        }
+        lastAuxSign = auxSign;
     }
 
     
@@ -237,9 +242,36 @@ uint8_t DriveTrain::ControllerSafety(const TickContext& ctx, const VehicleState&
 
 void DriveTrain::ComputeLights(const TickContext& ctx, TickDecision& dec, VehicleState& state)
 {
+    static bool lastIndicatorDirection = false;
+
     if (!ctx.user.detected) {
         dec.failSafe = true;
         return;
+    }
+
+    // check for aux button press that signal indicator use
+    if (ctx.user.auxPressed) {
+        // decide which direction the indicators should turn on based on steering. 
+        // If there's no noticeable steering angle, switch through left and right
+        if (ctx.user.steering > 0) {
+            // right on/off toggle
+            state.indicatorsR = !state.indicatorsR;
+            lastIndicatorDirection = true;
+        } else if (ctx.user.steering < 0) {
+            // left
+            state.indicatorsL = !state.indicatorsL;
+            lastIndicatorDirection = false;
+        } else {
+            // steering in the middle. Cycle through...
+            if (lastIndicatorDirection) {
+                state.indicatorsR = !state.indicatorsR;
+                lastIndicatorDirection = !state.indicatorsR;
+            } else {
+                state.indicatorsL = !state.indicatorsL;
+                lastIndicatorDirection = state.indicatorsL;
+            }
+        }
+        
     }
 
     dec.failSafe   = false;
