@@ -9,8 +9,10 @@
 
 namespace DriveConfig {
     static constexpr int16_t DeadBand = 50;
+    static constexpr uint32_t ExternalTimeout = 1000; // timeout Wifi control after 1s
     static constexpr uint32_t MaxUserIdleBeforeShutdown = 600000; // 600s = 10min
     static constexpr uint32_t MaxUserIdleWarn = 550000; // 30s before shutdown
+    static constexpr float SpeedLimiterFadeBand = 30.f;
 
     // Brakes / tap logic
     namespace Brakes {
@@ -73,10 +75,6 @@ namespace DriveConfig {
         // Maximum yaw-assist differential torque applied on the rear axle.
         // This stabilizes / assists turning but is NOT a steering actuator.
         static constexpr float SteerTorqueRear = 200.f;
-
-        // Absolute per-wheel torque limit sent to motor controllers.
-        // All torque commands are clamped to [-MaxOutputLimit .. +MaxOutputLimit].
-        static constexpr float MaxOutputLimit = 400.f;
 
         // -----------------------------------------------------------------------------
         // ABS / ASR – very simple reactive slip control
@@ -141,15 +139,19 @@ struct VehicleState {
     bool indicatorsL = false;
     bool brakeLight = false;
     bool reverseLight = false;
+    bool DRL = false;
     bool loBeam = false;
     bool hiBeam = false;
     bool tailLight = false;
     Gear currGear = Gear::N;
+    uint16_t vehicleSpeed = 0;
     uint32_t lastUserInput = 0;
     bool externalControl = false;
-    uint16_t maxSpeed = 1000;
-    uint16_t maxThrottle = 1000;
-    uint16_t maxPower = 1000;
+    uint32_t lastExtThrottle = 0;
+    uint32_t lastExtSteering = 0;
+    uint16_t maxSpeedForward = 200;
+    uint16_t maxSpeedReverse = 60;
+    uint16_t maxPower = 300;
 };
 
 struct DriveTrainStatus {
@@ -195,6 +197,7 @@ struct CommandItem {
     
     CommandParameter p1;
     CommandParameter p2;
+    CommandParameter p3;
 };
 
 class DriveTrain
@@ -208,7 +211,7 @@ public:
     void SendCommand(const CommandItem* cmd);
     void SendGear(Gear newGear);
     void SendIndicators(bool left, bool right);
-    void SendPowerLimit(uint16_t maxThrottle, uint16_t maxSpeed);
+    void SendPowerLimit(uint16_t maxThrottle, uint16_t maxSpeedFwd, uint16_t maxSpeedRev);
     void SendExternalControl(bool enable);
     void SendHeadlight(uint8_t mode, bool on);
     void SendSteer(int16_t throttle, int16_t steer);
@@ -281,5 +284,5 @@ protected:
     static uint8_t ControllerSafety(const TickContext& ctx, const VehicleState& state);
     static void        ComputeLights(const TickContext& ctx, TickDecision& dec,  VehicleState& state);
 
-    static Torques     TorqueVectoring(const TickContext& ctx, const VehicleState& state); // no out-params
+    static Torques     TorqueVectoring(const TickContext& ctx, VehicleState& state); // no out-params
 };

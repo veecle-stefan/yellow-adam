@@ -90,21 +90,23 @@ bool JSONInteraction::DispatchCommand(const String& msg, DriveTrain* drive)
 
     // power limit: {"type":"cmd","name":"limit","maxThrottle":123,"maxSpeed":456}
     if (name == "limit" || name == "powerlimit") {
-      int mt = -1, ms = -1;
+      int mt = -1, mr = -1, mf = -1;
       p = msg.indexOf("\"maxThrottle\":");
       if (p >= 0) mt = msg.substring(p + 14).toInt();
-      p = msg.indexOf("\"maxSpeed\":");
-      if (p >= 0) ms = msg.substring(p + 11).toInt();
-      if (mt >= 0 && ms >= 0) {
-        drive->SendPowerLimit((uint16_t)mt, (uint16_t)ms);
+      p = msg.indexOf("\"maxSpeedFwd\":");
+      if (p >= 0) mf = msg.substring(p + 14).toInt();
+      p = msg.indexOf("\"maxSpeedRev\":");
+      if (p >= 0) mr = msg.substring(p + 14).toInt();
+      if (mt >= 0 && mf >= 0) {
+        drive->SendPowerLimit((uint16_t)mt, (uint16_t)mf, (uint16_t)mr);
         return true;
       }
       return false;
     }
 
-    // headlights / drl: name == "low" | "high" | "drl" (mode: 0=drl,1=low,2=high)
+    // headlights / drl: name == "low" | "high" | "drl" (mode: 1=drl,2=low,3=high)
     if (name == "drl" || name == "low" || name == "high") {
-      uint8_t mode = (name == "drl") ? 0 : (name == "low") ? 1 : 2;
+      uint8_t mode = (name == "drl") ? 1 : (name == "low") ? 2 : 3;
       drive->SendHeadlight(mode, on);
       return true;
     }

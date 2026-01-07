@@ -83,10 +83,10 @@ void Axle::SendInternal(int16_t motL, int16_t motR, uint8_t remoteCmd)
     SerialCommand command;
     // Create command
     command.start    = Axle::StartFrame;
-    command.steer    = motL;
-    command.speed    = motR;
+    command.motR    = motR;
+    command.motL    = motL;
     command.cmd      = remoteCmd;
-    command.checksum = (uint16_t)(command.start ^ command.steer ^ command.speed);
+    command.checksum = (uint16_t)(command.start ^ command.motR ^ command.motL);
 
     // Write to Serial
     uart_write_bytes(conn, reinterpret_cast<const char*>(&command), sizeof(SerialCommand));
@@ -145,8 +145,8 @@ uint8_t Axle::ProcessFeedbackFrame(uint8_t* buffer, size_t len)
 
         uint16_t checksum = static_cast<uint16_t>(
             packet.start ^
-            packet.cmd1 ^
-            packet.cmd2 ^
+            packet.cmdR ^
+            packet.cmdL ^
             packet.speedR_meas ^
             packet.speedL_meas ^
             packet.batVoltage ^

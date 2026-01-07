@@ -18,8 +18,8 @@ public:
     struct SerialCommand 
     {
         uint16_t start;
-        int16_t  steer;
-        int16_t  speed;
+        int16_t  motR;
+        int16_t  motL;
         uint8_t  cmd;
         uint16_t checksum;
     } __attribute__((packed));
@@ -27,14 +27,14 @@ public:
     struct SerialFeedback
     {
         uint16_t start;
-        int16_t  cmd1;
-        int16_t  cmd2;
-        int16_t  speedR_meas;
+        int16_t  cmdL;
+        int16_t  cmdR;
         int16_t  speedL_meas;
+        int16_t  speedR_meas;
         int16_t  batVoltage;
         int16_t  boardTemp;
-        int16_t  currR_meas;
         int16_t  currL_meas;
+        int16_t  currR_meas;
         uint16_t checksum;
     } __attribute__((packed));
 

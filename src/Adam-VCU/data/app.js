@@ -17,85 +17,112 @@ let originSet = false;
 let lastT = 0;
 let lastS = 0;
 
+// ---------- Joystick on drive pad ----------
+let manualActive = false;
+let manualT = 0, manualS = 0;
+
+// When user releases the pad we set UI to 0,0 immediately.
+// Prevent a stale status frame from overwriting the 0,0 for a brief moment.
+let manualReleaseUntilMs = 0;
+
+// While external control is active, we periodically send steer (heartbeat).
+let extCtrlSteerTicker = 0;
+
 const allGears = ['N', 'D', 'R'];
 let currGearIdx = 0;
-
 // ---------- External control (runtime-only; no persistence) ----------
 let extCtrlActive = false;
 
-// NEW header buttons
-const btnTake = document.getElementById("btn_take_control");
-const btnStop = document.getElementById("btn_stop_control");
-
-// OLD buttons may still exist in HTML; force-hide them to avoid duplicates
-const legacyTake = document.getElementById("btn_extctrl");
-const legacyStop = document.getElementById("btn_extctrl_stop");
-if (legacyTake) legacyTake.style.display = "none";
-if (legacyStop) legacyStop.style.display = "none";
+const btnExtCtrlTake = document.getElementById("btn_take_control");
+const btnExtCtrlStop = document.getElementById("btn_stop_control");
 
 function setExtCtrlUI(active){
   extCtrlActive = !!active;
 
-  // Show exactly one of the two header buttons
-  if (btnTake) btnTake.style.display = extCtrlActive ? "none" : "inline-block";
-  if (btnStop) btnStop.style.display = extCtrlActive ? "inline-block" : "none";
+  // Toggle button visibility
+  if (btnExtCtrlTake) btnExtCtrlTake.style.display = extCtrlActive ? "none" : "inline-block";
+  if (btnExtCtrlStop) btnExtCtrlStop.style.display = extCtrlActive ? "inline-block" : "none";
 
-  // Optional: a body class if you want CSS changes when active
+  // Optional: CSS hook
   document.body.classList.toggle("extctrl", extCtrlActive);
+}
+
+function startExtCtrlSteerTicker(){
+  clearInterval(extCtrlSteerTicker);
+  extCtrlSteerTicker = setInterval(() => {
+    if(!extCtrlActive) return;
+    // Send periodically even if values didn't change
+    const t = manualActive ? manualT : 0;
+    const s = manualActive ? manualS : 0;
+    wsSend({ type:"cmd", name:"steer", t, s });
+  }, 100);
+}
+
+function stopExtCtrlSteerTicker(){
+  clearInterval(extCtrlSteerTicker);
+  extCtrlSteerTicker = 0;
 }
 
 function setExtCtrl(active, { send = true } = {}){
   setExtCtrlUI(active);
 
+  if(extCtrlActive) startExtCtrlSteerTicker();
+  else stopExtCtrlSteerTicker();
   if(send){
     wsSend({ type:"cmd", name:"extctrl", on: extCtrlActive });
   }
-
-  // Safety: when stopping control, stop joystick + send steer=0 immediately.
+  // Safety: when stopping control, also stop joystick + send steer=0 immediately.
   if(!extCtrlActive){
     if(manualActive) stopManual();
     else wsSend({ type:"cmd", name:"steer", t:0, s:0 });
   }
 }
 
-btnTake?.addEventListener("click", (e) => {
+btnExtCtrlTake?.addEventListener("click", (e) => {
   e.preventDefault();
   e.stopPropagation();
+  console.log('Enabling extrnal control');
   setExtCtrl(true);
 });
 
-btnStop?.addEventListener("click", (e) => {
+btnExtCtrlStop?.addEventListener("click", (e) => {
   e.preventDefault();
   e.stopPropagation();
+  console.log('Disabling extrnal control');
   setExtCtrl(false);
 });
 
 // Default: control OFF on page load
 setExtCtrlUI(false);
+stopExtCtrlSteerTicker();
 
 // ---------- Limit profiles ----------
 const profiles = [
-  { name:"Kids",     maxThrottle:250,  maxSpeed:150 },
-  { name:"Advanced", maxThrottle:400,  maxSpeed:300 },
-  { name:"Mad Max",  maxThrottle:1000, maxSpeed:500 },
+  { name:"Kids",     maxThrottle:150,  maxSpeedF:150, maxSpeedR: 60 },
+  { name:"Advanced", maxThrottle:400,  maxSpeedF:300, maxSpeedR: 80 },
+  { name:"Mad Max",  maxThrottle:1000, maxSpeedF:500, maxSpeedR: 100 },
 ];
 
 const limitProfileEl  = document.getElementById("limit_profile");
 const limitThrottleEl = document.getElementById("limit_throttle");
-const limitSpeedEl    = document.getElementById("limit_speed");
 const limitThrottleOut= document.getElementById("limit_throttle_out");
-const limitSpeedOut   = document.getElementById("limit_speed_out");
+const limitSpeedFEl    = document.getElementById("limit_speed_f");
+const limitSpeedFOut   = document.getElementById("limit_speed_f_out");
+const limitSpeedREl    = document.getElementById("limit_speed_r");
+const limitSpeedROut   = document.getElementById("limit_speed_r_out");
 const btnSendLimits   = document.getElementById("btn_send_limits");
 
 function updateLimitOutputs(){
   if(limitThrottleOut && limitThrottleEl) limitThrottleOut.textContent = String(Number(limitThrottleEl.value) | 0);
-  if(limitSpeedOut && limitSpeedEl) limitSpeedOut.textContent = String(Number(limitSpeedEl.value) | 0);
+  if(limitSpeedFOut && limitSpeedFEl) limitSpeedFOut.textContent = String(Number(limitSpeedFEl.value) | 0);
+  if(limitSpeedROut && limitSpeedREl) limitSpeedROut.textContent = String(Number(limitSpeedREl.value) | 0);
 }
 
 function applyProfile(p){
   if(!p) return;
   if(limitThrottleEl) limitThrottleEl.value = String(p.maxThrottle);
-  if(limitSpeedEl) limitSpeedEl.value = String(p.maxSpeed);
+  if(limitSpeedFEl) limitSpeedFEl.value = String(p.maxSpeedF);
+  if(limitSpeedREl) limitSpeedREl.value = String(p.maxSpeedR);
   updateLimitOutputs();
 }
 
@@ -134,13 +161,15 @@ function initProfilesUI(){
   };
 
   limitThrottleEl?.addEventListener("input", onManualChange);
-  limitSpeedEl?.addEventListener("input", onManualChange);
+  limitSpeedFEl?.addEventListener("input", onManualChange);
+  limitSpeedREl?.addEventListener("input", onManualChange);
   updateLimitOutputs();
 
   btnSendLimits?.addEventListener("click", () => {
     const mt = Math.max(50, Math.min(1000, Number(limitThrottleEl?.value ?? 0) || 0));
-    const ms = Math.max(20, Math.min(500,  Number(limitSpeedEl?.value ?? 0) || 0));
-    wsSend({ type:"cmd", name:"limit", maxThrottle: mt|0, maxSpeed: ms|0 });
+    const msf = Math.max(50, Math.min(500,  Number(limitSpeedFEl?.value ?? 0) || 0));
+    const msr = Math.max(50, Math.min(200,  Number(limitSpeedREl?.value ?? 0) || 0));
+    wsSend({ type:"cmd", name:"limit", maxThrottle: mt|0, maxSpeedFwd: msf|0, maxSpeedRev: msr|0 });
   });
 }
 
@@ -521,8 +550,9 @@ function handleIncoming(evDataString) {
   // Record raw sample
   recordHistorySample(Date.now(), msg);
 
-  // Only update T/S from WS if not in manual override
-  if(!manualActive){
+  // Only update T/S from WS if not in manual override.
+  // After releasing the pad we briefly keep 0,0 on screen to avoid stale frames.
+  if(!manualActive && Date.now() > manualReleaseUntilMs){
     const t = msg.t ?? 0;
     const s = msg.s ?? 0;
     setNum("throttle", t); setHBar("throttle", t);
@@ -588,11 +618,6 @@ document.getElementById("btn_high").onclick  = () => wsSend({type:"cmd", name:"h
 document.getElementById("btn_ind_l").onclick = () => wsSend({type:"cmd", name:"ind_l", on: toggleBtn("btn_ind_l")});
 document.getElementById("btn_ind_r").onclick = () => wsSend({type:"cmd", name:"ind_r", on: toggleBtn("btn_ind_r")});
 
-// ---------- Joystick on drive pad ----------
-let manualActive = false;
-let manualT = 0, manualS = 0;
-let sendTimer = 0;
-let lastSentT = 99999, lastSentS = 99999;
 
 function computeTSFromPointer(clientX, clientY){
   const r = padEl.getBoundingClientRect();
@@ -618,26 +643,19 @@ function applyManual(t, s){
 function startManual(){
   manualActive = true;
   setManualMode(true);
-  clearInterval(sendTimer);
-  sendTimer = setInterval(() => {
-    if(!manualActive) return;
-    if(manualT === lastSentT && manualS === lastSentS) return;
-    lastSentT = manualT;
-    lastSentS = manualS;
-    wsSend({ type:"cmd", name:"steer", t:manualT, s:manualS });
-  }, 40);
 }
-
 function stopManual(){
   manualActive = false;
-  clearInterval(sendTimer);
-  sendTimer = 0;
+
+  // Immediately show 0,0 on the UI (and keep it briefly to avoid stale WS overwrite)
+  manualT = 0; manualS = 0;
+  manualReleaseUntilMs = Date.now() + 200;
+  setNum("throttle", 0); setHBar("throttle", 0);
+  setNum("steering", 0); setHBar("steering", 0);
+
   setManualMode(false);
-  lastSentT = 99999;
-  lastSentS = 99999;
   wsSend({ type:"cmd", name:"steer", t:0, s:0 });
 }
-
 function computeTSFromDelta(dx, dy){
   const rect = padEl.getBoundingClientRect();
   const r = Math.max(40, Math.min(rect.width, rect.height) * 0.45);
@@ -679,7 +697,7 @@ padEl.addEventListener("pointerdown", (e) => {
 });
 
 window.addEventListener("pointermove", (e) => {
-  if(!manualActive) return;
+  if(!manualActive || !extCtrlActive) return;
   e.preventDefault();
   if(!originSet) return;
 

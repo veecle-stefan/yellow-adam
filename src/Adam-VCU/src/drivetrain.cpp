@@ -67,12 +67,13 @@ void DriveTrain::SendIndicators(bool left, bool right)
     SendCommand(&cmd);
 }
 
-void DriveTrain::SendPowerLimit(uint16_t maxThrottle, uint16_t maxSpeed)
+void DriveTrain::SendPowerLimit(uint16_t maxThrottle, uint16_t maxSpeedFwd, uint16_t maxSpeedRev)
 {
     CommandItem cmd;
     cmd.cmd = DriveCommand::SetPowerLimit;
     cmd.p1.u16 = maxThrottle;
-    cmd.p2.u16 = maxSpeed;
+    cmd.p2.u16 = maxSpeedFwd;
+    cmd.p3.u16 = maxSpeedRev;
     SendCommand(&cmd);
 }
 
@@ -242,36 +243,54 @@ uint8_t DriveTrain::ControllerSafety(const TickContext& ctx, const VehicleState&
 
 void DriveTrain::ComputeLights(const TickContext& ctx, TickDecision& dec, VehicleState& state)
 {
-    static bool lastIndicatorDirection = false;
+    enum class CenterPhase { RightOn, AllOff1, LeftOn, AllOff2 };
+    static CenterPhase centerPhase = CenterPhase::RightOn;
 
     if (!ctx.user.detected) {
         dec.failSafe = true;
         return;
     }
 
-    // check for aux button press that signal indicator use
     if (ctx.user.auxPressed) {
-        // decide which direction the indicators should turn on based on steering. 
-        // If there's no noticeable steering angle, switch through left and right
+
         if (ctx.user.steering > 0) {
-            // right on/off toggle
+            // Right toggle
+            state.indicatorsL = false;
             state.indicatorsR = !state.indicatorsR;
-            lastIndicatorDirection = true;
+
         } else if (ctx.user.steering < 0) {
-            // left
+            // Left toggle
+            state.indicatorsR = false;
             state.indicatorsL = !state.indicatorsL;
-            lastIndicatorDirection = false;
+
         } else {
-            // steering in the middle. Cycle through...
-            if (lastIndicatorDirection) {
-                state.indicatorsR = !state.indicatorsR;
-                lastIndicatorDirection = !state.indicatorsR;
-            } else {
-                state.indicatorsL = !state.indicatorsL;
-                lastIndicatorDirection = state.indicatorsL;
+            // Center: Right, Off, Left, Off
+            switch (centerPhase) {
+                case CenterPhase::RightOn:
+                    state.indicatorsL = false;
+                    state.indicatorsR = true;
+                    centerPhase = CenterPhase::AllOff1;
+                    break;
+
+                case CenterPhase::AllOff1:
+                    state.indicatorsL = false;
+                    state.indicatorsR = false;
+                    centerPhase = CenterPhase::LeftOn;
+                    break;
+
+                case CenterPhase::LeftOn:
+                    state.indicatorsR = false;
+                    state.indicatorsL = true;
+                    centerPhase = CenterPhase::AllOff2;
+                    break;
+
+                case CenterPhase::AllOff2:
+                    state.indicatorsL = false;
+                    state.indicatorsR = false;
+                    centerPhase = CenterPhase::RightOn;
+                    break;
             }
         }
-        
     }
 
     dec.failSafe   = false;
@@ -281,7 +300,7 @@ void DriveTrain::ComputeLights(const TickContext& ctx, TickDecision& dec, Vehicl
     state.reverseLight = (state.currGear == Gear::R);
 }
 
-DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, const VehicleState& state)
+DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, VehicleState& state)
 {
     Torques t{};
 
@@ -289,9 +308,9 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, const Ve
         return t;
     }
 
-    const float maxT = static_cast<float>(DriveConfig::TV::MaxOutputLimit);
+    const float maxT = static_cast<float>(state.maxPower);
 
-    const float throttle =
+    const float throttleInput =
         static_cast<float>(ctx.user.throttle) * maxT / 1000.0f; // [-maxT..+maxT]
 
     float s = static_cast<float>(ctx.user.steering) / 1000.0f;  // [-1..1]
@@ -317,13 +336,61 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, const Ve
     const auto sp_rl = getSpeed(ctx.currRear,  true);
     const auto sp_rr = getSpeed(ctx.currRear,  false);
 
+    auto lerp = [](float a, float b, float u) -> float { return a + (b - a) * u; };
+
     auto signOf = [](int16_t v) -> float { return (v > 0) ? +1.f : (v < 0) ? -1.f : 0.f; };
 
+    auto median_of = [&](float* arr, int n) -> float {
+        // n is small (<=3). simple sort.
+        for (int i = 0; i < n; ++i)
+            for (int j = i + 1; j < n; ++j)
+                if (arr[j] < arr[i]) { float x = arr[i]; arr[i] = arr[j]; arr[j] = x; }
+
+        if (n == 1) return arr[0];
+        if (n == 2) return 0.5f * (arr[0] + arr[1]);
+        return arr[1]; // n==3
+    };
+
+    // Precompute abs speeds
+    float v[4];
+    bool  ok[4];
+    v[0] = sp_fl ? static_cast<float>(abs(*sp_fl)) : 0.f; ok[0] = sp_fl.has_value();
+    v[1] = sp_fr ? static_cast<float>(abs(*sp_fr)) : 0.f; ok[1] = sp_fr.has_value();
+    v[2] = sp_rl ? static_cast<float>(abs(*sp_rl)) : 0.f; ok[2] = sp_rl.has_value();
+    v[3] = sp_rr ? static_cast<float>(abs(*sp_rr)) : 0.f; ok[3] = sp_rr.has_value();
+
+    auto median_wheelspeeds = [&](float* arr) -> float {
+        float tmp[3];
+        int n = 0;
+        for (int i = 0; i < 4; ++i) {
+            if (!ok[i]) continue;
+            tmp[n++] = v[i];
+        }
+        if (n == 0) return 0.f;
+        return median_of(tmp, n);
+    };
+
+    
+    float vehicleSpeed = median_wheelspeeds(v);
+    state.vehicleSpeed = (uint16_t)vehicleSpeed;
+    
+    // limit to the max speed by fading out near max speed
+    float allowedMaxSpeed = (state.currGear == Gear::D) ? state.maxSpeedForward : state.maxSpeedReverse;
+    float start = allowedMaxSpeed - DriveConfig::SpeedLimiterFadeBand;
+
+    // scale in [0..1]
+    float spdFade = (vehicleSpeed - start) / DriveConfig::SpeedLimiterFadeBand;
+    if (spdFade < 0.f) spdFade = 0.f;
+    if (spdFade > 1.f) spdFade = 1.f;
+
+    const float throttle = (throttleInput > 0.f && vehicleSpeed >= start)
+               ? (throttleInput * (1.f - spdFade))
+               : throttleInput;
     // Anti-reversing fade: scale braking torque to zero as |speed| -> 0
     const float vFadeDen = static_cast<float>(DriveConfig::Brakes::AntiReversingSpeed);
 
     auto brakeScale = [&](std::optional<int16_t> sp) -> float {
-        if (!sp || vFadeDen <= 1.0f) return 1.0f; // if speed missing: keep braking (your call)
+        if (!sp || vFadeDen <= 1.0f) return 1.0f; // if speed missing: keep braking
         float a = static_cast<float>(abs(*sp)) / vFadeDen;
         if (a > 1.f) a = 1.f;
         if (a < 0.f) a = 0.f;
@@ -354,8 +421,6 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, const Ve
         v = clampF(v, -maxT, +maxT);
         return static_cast<int16_t>(v);
     };
-
-    auto lerp = [](float a, float b, float u) -> float { return a + (b - a) * u; };
 
     struct PairOut { float l; float r; };
     auto allocate_pair = [&](float Tc, float Td) -> PairOut {
@@ -492,13 +557,6 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, const Ve
         if (sc > 1.f) sc = 1.f;
     };
 
-    // Precompute abs speeds
-    float v[4];
-    bool  ok[4];
-    v[0] = sp_fl ? static_cast<float>(abs(*sp_fl)) : 0.f; ok[0] = sp_fl.has_value();
-    v[1] = sp_fr ? static_cast<float>(abs(*sp_fr)) : 0.f; ok[1] = sp_fr.has_value();
-    v[2] = sp_rl ? static_cast<float>(abs(*sp_rl)) : 0.f; ok[2] = sp_rl.has_value();
-    v[3] = sp_rr ? static_cast<float>(abs(*sp_rr)) : 0.f; ok[3] = sp_rr.has_value();
 
     // Default: recover scales every tick (unless we detect slip on that wheel)
     recover(slipScale_fl);
@@ -506,16 +564,6 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, const Ve
     recover(slipScale_rl);
     recover(slipScale_rr);
 
-    auto median_of = [&](float* arr, int n) -> float {
-        // n is small (<=3). simple sort.
-        for (int i = 0; i < n; ++i)
-            for (int j = i + 1; j < n; ++j)
-                if (arr[j] < arr[i]) { float x = arr[i]; arr[i] = arr[j]; arr[j] = x; }
-
-        if (n == 1) return arr[0];
-        if (n == 2) return 0.5f * (arr[0] + arr[1]);
-        return arr[1]; // n==3
-    };
 
     auto vRefExcluding = [&](int excludeIdx) -> float {
         float tmp[3];
@@ -693,7 +741,18 @@ void DriveTrain::PublishStatus(const TickContext& ctx, const TickDecision& dec, 
 
 void DriveTrain::ProcessExtCmds(TickContext& ctx, VehicleState& state)
 {
-// check for commands
+    // keep track of timing for external control
+    static uint32_t lastExtSteerCmd = 0;
+
+    if (state.externalControl)
+    {
+        // check for timeout
+        if (ctx.nowMs - lastExtSteerCmd > DriveConfig::ExternalTimeout) {
+            state.externalControl = false;
+            state.lastExtSteering =  state.lastExtThrottle = 0;
+        } 
+    }
+    // check for commands
     CommandItem extCmd;
     while (xQueueReceive(extCmdQueue, &extCmd, 0) == pdTRUE) {
         switch (extCmd.cmd) {
@@ -705,28 +764,38 @@ void DriveTrain::ProcessExtCmds(TickContext& ctx, VehicleState& state)
                 state.indicatorsR = extCmd.p2.onOff;
                 break;
             case DriveCommand::SetPowerLimit:
-                state.maxThrottle = extCmd.p1.u16;
-                state.maxSpeed = extCmd.p2.u16;
+                state.maxPower = extCmd.p1.u16;
+                state.maxSpeedForward = extCmd.p2.u16;
+                state.maxSpeedReverse = extCmd.p3.u16;
                 break;
             case DriveCommand::EnableExternalControl:
                 state.externalControl = extCmd.p1.onOff;
+                lastExtSteerCmd = ctx.nowMs;
+                ctx.user.detected = true;
                 break;
             case DriveCommand::SetHeadlight:
                 {
-                    uint8_t mode = extCmd.p1.u8; // 0=drl, 1=low, 2=high
+                    uint8_t mode = extCmd.p1.u8; // 1=drl, 2=low, 3=high
                     bool on = extCmd.p2.onOff;
-                    if (mode == 0) state.hazards = on;
-                    else if (mode == 1) state.loBeam = on;
-                    else if (mode == 2) state.hiBeam = on;
+                    if (mode == 1) state.DRL = on;
+                    else if (mode == 2) state.loBeam = on;
+                    else if (mode == 3) state.hiBeam = on;
                 }
                 break;
             case DriveCommand::Steer:
-                if (state.externalControl) {
-                    ctx.user.throttle = extCmd.p1.i16;
-                    ctx.user.steering = extCmd.p2.i16;
-                }
+                lastExtSteerCmd = ctx.nowMs;
+                state.lastExtThrottle = extCmd.p1.i16;
+                state.lastExtSteering = extCmd.p2.i16;
                 break;
         }
+    }
+
+    if (state.externalControl) {
+        ctx.user.throttle = state.lastExtThrottle;
+        ctx.user.steering = state.lastExtSteering;
+        // still alive
+        ctx.user.detected = true;
+        ctx.user.someInput = true;
     }
 }
 
