@@ -24,6 +24,7 @@ const pprInput = el("ppr");
 const statusEl = el("status");
 const poseEl = el("pose");
 const stepEl = el("step");
+const distEl = el("dist");
 
 function resizeCanvas() {
   const dpr = window.devicePixelRatio || 1;
@@ -37,9 +38,19 @@ resizeCanvas();
 
 // ----------------------- Data + Simulation State -----------------------
 
-let samples = []; // {ts_ms, rpm_fl, rpm_fr, rpm_rl, rpm_rr}
+let samples = []; // {ts_ms, s, tq_fl,tq_fr,tq_rl,tq_rr, rpm_fl,rpm_fr,rpm_rl,rpm_rr}
 let poses = []; // pose per index: {x_cm, y_cm, theta_rad}
-let path = []; // list of points {x_cm,y_cm}
+let wheelPaths = {
+  fl: [],
+  fr: [],
+  rl: [],
+  rr: [],
+};
+let cumDistCm = []; // cumulative center distance per pose index
+let maxAbsTq = 1000; // auto-detected from file (abs max over tq_*); fallback 1000
+const CURRENT_UNITS_PER_AMP = 50; // tune: 1A = 50 units
+const VOLT_SCALE = 0.01; // tune: raw vf/vr to volts (e.g. 3801 -> 38.01V)
+const TEMP_SCALE = 0.1; // tune: raw tf/tr to °C (e.g. 257 -> 25.7°C)
 let idx = 0;
 
 let playing = false;
@@ -80,6 +91,20 @@ function parseCSV(text) {
 
     const s = {
       ts_ms: Number(cols[h.ts_ms]),
+      // optional inputs (missing cols default to 0)
+      s: h.s != null ? Number(cols[h.s]) : 0,
+      tq_fl: h.tq_fl != null ? Number(cols[h.tq_fl]) : 0,
+      tq_fr: h.tq_fr != null ? Number(cols[h.tq_fr]) : 0,
+      tq_rl: h.tq_rl != null ? Number(cols[h.tq_rl]) : 0,
+      tq_rr: h.tq_rr != null ? Number(cols[h.tq_rr]) : 0,
+      cu_fl: h.cu_fl != null ? Number(cols[h.cu_fl]) : 0,
+      cu_fr: h.cu_fr != null ? Number(cols[h.cu_fr]) : 0,
+      cu_rl: h.cu_rl != null ? Number(cols[h.cu_rl]) : 0,
+      cu_rr: h.cu_rr != null ? Number(cols[h.cu_rr]) : 0,
+      vf: h.vf != null ? Number(cols[h.vf]) : 0,
+      vr: h.vr != null ? Number(cols[h.vr]) : 0,
+      tf: h.tf != null ? Number(cols[h.tf]) : 0,
+      tr: h.tr != null ? Number(cols[h.tr]) : 0,
       rpm_fl: Number(cols[h.rpm_fl]),
       rpm_fr: Number(cols[h.rpm_fr]),
       rpm_rl: Number(cols[h.rpm_rl]),
@@ -169,18 +194,58 @@ function stepPose(prev, sample, nextSample) {
   const y = prev.y_cm + ds * Math.sin(thetaMid);
   const theta = prev.theta_rad + dTheta;
 
-  return { x_cm: x, y_cm: y, theta_rad: theta, dt_s, dL, dR };
+  return {
+    x_cm: x,
+    y_cm: y,
+    theta_rad: theta,
+    dt_s,
+    d_fl,
+    d_fr,
+    d_rl,
+    d_rr,
+    dL,
+    dR,
+    ds,
+  };
+}
+
+function wheelWorld(pose, dx_cm, dy_cm) {
+  const c = Math.cos(pose.theta_rad);
+  const s = Math.sin(pose.theta_rad);
+  return {
+    x_cm: pose.x_cm + dx_cm * c - dy_cm * s,
+    y_cm: pose.y_cm + dx_cm * s + dy_cm * c,
+  };
 }
 
 function recomputeAll() {
   poses = [];
-  path = [];
+  wheelPaths = { fl: [], fr: [], rl: [], rr: [] };
+  cumDistCm = [];
   bounds = { minX: 0, minY: 0, maxX: 0, maxY: 0, init: false };
 
   const p0 = { x_cm: 0, y_cm: 0, theta_rad: 0 };
   poses.push(p0);
-  path.push({ x_cm: p0.x_cm, y_cm: p0.y_cm });
-  updateBounds(p0.x_cm, p0.y_cm);
+  cumDistCm.push(0);
+
+  // seed wheel paths (torque for the very first point uses first sample if available)
+  const { track_cm, wheelbase_cm } = getConstants();
+  const ax = wheelbase_cm / 2;
+  const wy = track_cm / 2;
+  const s0 = samples[0] || { tq_fl: 0, tq_fr: 0, tq_rl: 0, tq_rr: 0 };
+  const fl0 = wheelWorld(p0, +ax, +wy);
+  const fr0 = wheelWorld(p0, +ax, -wy);
+  const rl0 = wheelWorld(p0, -ax, +wy);
+  const rr0 = wheelWorld(p0, -ax, -wy);
+  wheelPaths.fl.push({ ...fl0, tq: Number.isFinite(s0.tq_fl) ? s0.tq_fl : 0 });
+  wheelPaths.fr.push({ ...fr0, tq: Number.isFinite(s0.tq_fr) ? s0.tq_fr : 0 });
+  wheelPaths.rl.push({ ...rl0, tq: Number.isFinite(s0.tq_rl) ? s0.tq_rl : 0 });
+  wheelPaths.rr.push({ ...rr0, tq: Number.isFinite(s0.tq_rr) ? s0.tq_rr : 0 });
+
+  // bounds should include wheels too (better zoom)
+  for (const p of [fl0, fr0, rl0, rr0, { x_cm: p0.x_cm, y_cm: p0.y_cm }]) {
+    updateBounds(p.x_cm, p.y_cm);
+  }
 
   for (let i = 0; i < samples.length - 1; i++) {
     const prev = poses[i];
@@ -193,8 +258,26 @@ function recomputeAll() {
       theta_rad: stepped.theta_rad,
     };
     poses.push(p);
-    path.push({ x_cm: p.x_cm, y_cm: p.y_cm });
-    updateBounds(p.x_cm, p.y_cm);
+
+    // cumulative distance from center ds
+    const prevDist = cumDistCm[i] || 0;
+    cumDistCm.push(prevDist + (Number.isFinite(stepped.ds) ? stepped.ds : 0));
+
+    // wheel traces for this pose, using torque from cur sample
+    const { track_cm: tcm, wheelbase_cm: wcm } = getConstants();
+    const ax2 = wcm / 2;
+    const wy2 = tcm / 2;
+    const fl = wheelWorld(p, +ax2, +wy2);
+    const fr = wheelWorld(p, +ax2, -wy2);
+    const rl = wheelWorld(p, -ax2, +wy2);
+    const rr = wheelWorld(p, -ax2, -wy2);
+
+    wheelPaths.fl.push({ ...fl, tq: Number.isFinite(cur.tq_fl) ? cur.tq_fl : 0 });
+    wheelPaths.fr.push({ ...fr, tq: Number.isFinite(cur.tq_fr) ? cur.tq_fr : 0 });
+    wheelPaths.rl.push({ ...rl, tq: Number.isFinite(cur.tq_rl) ? cur.tq_rl : 0 });
+    wheelPaths.rr.push({ ...rr, tq: Number.isFinite(cur.tq_rr) ? cur.tq_rr : 0 });
+
+    for (const wp of [fl, fr, rl, rr]) updateBounds(wp.x_cm, wp.y_cm);
   }
 
   idx = 0;
@@ -284,6 +367,15 @@ function worldToScreen(x_cm, y_cm) {
   return { x: sx, y: sy };
 }
 
+function roundRect(ctx, x, y, w, h, r) {
+  const rr = Math.max(0, Math.min(r, Math.min(w, h) / 2));
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+}
+
 function drawGrid() {
   const rect = canvas.getBoundingClientRect();
   const w = rect.width,
@@ -350,27 +442,85 @@ function drawGrid() {
   ctx.restore();
 }
 
-function drawPath(uptoIndex) {
+function tqToLineWidthPx(tq) {
+  // thickness scales automatically with maxAbsTq in the file
+  const a = Math.abs(Number.isFinite(tq) ? tq : 0);
+  const denom = Math.max(1e-6, Number.isFinite(maxAbsTq) ? maxAbsTq : 1000);
+  const n = Math.min(1, a / denom);
+  // tune these if you want thicker/thinner traces
+  return 1.0 + n * 7.0;
+}
+
+function drawWheelTraces(uptoIndex) {
   if (uptoIndex < 1) return;
 
-  ctx.save();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = "rgba(120,200,255,0.85)";
-  ctx.beginPath();
+  const wheels = [
+    { key: "fl", style: "rgba(255, 92, 92, 0.85)" },
+    { key: "fr", style: "rgba(92, 190, 255, 0.85)" },
+    { key: "rl", style: "rgba(120, 255, 160, 0.85)" },
+    { key: "rr", style: "rgba(255, 210, 92, 0.85)" },
+  ];
 
-  const p0 = worldToScreen(poses[0].x_cm, poses[0].y_cm);
-  ctx.moveTo(p0.x, p0.y);
+  for (const w of wheels) {
+    const arr = wheelPaths[w.key];
+    if (!arr || arr.length < 2) continue;
+    const maxI = Math.min(uptoIndex, arr.length - 1);
 
-  for (let i = 1; i <= uptoIndex; i++) {
-    const p = poses[i];
-    const s = worldToScreen(p.x_cm, p.y_cm);
-    ctx.lineTo(s.x, s.y);
+    ctx.save();
+    ctx.strokeStyle = w.style;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+
+    // per-segment drawing to vary thickness
+    for (let i = 0; i < maxI; i++) {
+      const a = arr[i];
+      const b = arr[i + 1];
+      const p1 = worldToScreen(a.x_cm, a.y_cm);
+      const p2 = worldToScreen(b.x_cm, b.y_cm);
+      ctx.lineWidth = tqToLineWidthPx(a.tq);
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y);
+      ctx.lineTo(p2.x, p2.y);
+      ctx.stroke();
+    }
+
+    ctx.restore();
   }
+}
+
+function drawSteeringIndicator(pose, steerVal) {
+  const s = Number.isFinite(steerVal) ? steerVal : 0;
+  if (Math.abs(s) < 1) return;
+
+  // Draw a short line on the *imaginary middle trace* (vehicle center)
+  // whose ORIENTATION indicates steering input.
+  // Tune these:
+  const LINE_LEN_CM = 10; // fixed length
+  const MAX_STEER_ANGLE_DEG = 25; // max rotation at |s|=1000
+
+  const n = Math.max(-1, Math.min(1, s / 1000));
+  const steerAngle = (n * MAX_STEER_ANGLE_DEG * Math.PI) / 180;
+
+  // base: perpendicular to heading; rotate by steerAngle
+  const ang = pose.theta_rad + Math.PI / 2 + steerAngle;
+  const dx = Math.cos(ang) * LINE_LEN_CM;
+  const dy = Math.sin(ang) * LINE_LEN_CM;
+
+  const p1 = worldToScreen(pose.x_cm, pose.y_cm);
+  const p2 = worldToScreen(pose.x_cm + dx, pose.y_cm + dy);
+
+  ctx.save();
+  ctx.strokeStyle = "rgba(255,180,90,0.95)";
+  ctx.lineWidth = 3;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(p1.x, p1.y);
+  ctx.lineTo(p2.x, p2.y);
   ctx.stroke();
   ctx.restore();
 }
 
-function drawCar(pose) {
+function drawCar(pose, sample) {
   const { track_cm, wheelbase_cm } = getConstants();
 
   // car body dimensions (top-down box) in cm
@@ -440,6 +590,23 @@ function drawCar(pose) {
     { name: "RR", dx: -ax, dy: -wy },
   ];
 
+  // --- Power / telemetry overlay ---
+  const smp = sample || {};
+  const vFront = (Number.isFinite(smp.vf) ? smp.vf : 0) * VOLT_SCALE;
+  const vRear  = (Number.isFinite(smp.vr) ? smp.vr : 0) * VOLT_SCALE;
+  const tFront = (Number.isFinite(smp.tf) ? smp.tf : 0) * TEMP_SCALE;
+  const tRear  = (Number.isFinite(smp.tr) ? smp.tr : 0) * TEMP_SCALE;
+  const a_fl = (Number.isFinite(smp.cu_fl) ? smp.cu_fl : 0) / CURRENT_UNITS_PER_AMP;
+  const a_fr = (Number.isFinite(smp.cu_fr) ? smp.cu_fr : 0) / CURRENT_UNITS_PER_AMP;
+  const a_rl = (Number.isFinite(smp.cu_rl) ? smp.cu_rl : 0) / CURRENT_UNITS_PER_AMP;
+  const a_rr = (Number.isFinite(smp.cu_rr) ? smp.cu_rr : 0) / CURRENT_UNITS_PER_AMP;
+  const w_fl = a_fl * vFront;
+  const w_fr = a_fr * vFront;
+  const w_rl = a_rl * vRear;
+  const w_rr = a_rr * vRear;
+  const w_sum = w_fl + w_fr + w_rl + w_rr;
+  const wattsByName = { FL: w_fl, FR: w_fr, RL: w_rl, RR: w_rr };
+
   ctx.fillStyle = "rgba(0,0,0,0.55)";
   ctx.strokeStyle = "rgba(255,255,255,0.35)";
   ctx.lineWidth = 1;
@@ -462,6 +629,48 @@ function drawCar(pose) {
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
+
+    // wattage label
+    const wc = rot(w.dx, w.dy);
+    const ws = worldToScreen(wc.x, wc.y);
+    const wval = wattsByName[w.name] || 0;
+    ctx.save();
+    ctx.fillStyle = "rgba(255,255,255,0.92)";
+    ctx.font = "12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`${Math.round(wval)}W`, ws.x, ws.y);
+    ctx.restore();
+  }
+
+  // center telemetry box
+  {
+    const c = worldToScreen(x, y);
+    const lines = [
+      `Σ ${Math.round(w_sum)}W`,
+      `Vf ${vFront.toFixed(2)}V  Vr ${vRear.toFixed(2)}V`,
+      `Tf ${tFront.toFixed(1)}°C Tr ${tRear.toFixed(1)}°C`,
+    ];
+    ctx.save();
+    ctx.font = "12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    const padX = 10, padY = 8, lineH = 14;
+    const wMax = Math.max(...lines.map(l => ctx.measureText(l).width));
+    const boxW = wMax + padX * 2;
+    const boxH = lines.length * lineH + padY * 2;
+    ctx.fillStyle = "rgba(10,14,18,0.70)";
+    ctx.strokeStyle = "rgba(255,255,255,0.20)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    roundRect(ctx, c.x - boxW/2, c.y - boxH/2, boxW, boxH, 10);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "rgba(255,255,255,0.92)";
+    for (let i=0;i<lines.length;i++) {
+      ctx.fillText(lines[i], c.x, c.y - boxH/2 + padY + lineH/2 + i*lineH);
+    }
+    ctx.restore();
   }
 
   // car center marker
@@ -479,16 +688,41 @@ function draw() {
 
   drawGrid();
 
-  // show path up to idx
-  drawPath(idx);
+  // show wheel traces up to idx
+  drawWheelTraces(idx);
+
+  // draw steering indicator (perpendicular line)
+  const p = poses[idx] || { x_cm: 0, y_cm: 0, theta_rad: 0 };
+  const steerVal = samples[idx] ? samples[idx].s : 0;
+  drawSteeringIndicator(p, steerVal);
 
   // draw car at idx
-  const p = poses[idx] || { x_cm: 0, y_cm: 0, theta_rad: 0 };
-  drawCar(p);
+  drawCar(p, samples[idx] || null);
+
+  // total distance bottom-left
+  {
+    const rect = canvas.getBoundingClientRect();
+    const dcm = cumDistCm[idx] || 0;
+    const dm = dcm / 100.0;
+    ctx.save();
+    ctx.font = "13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+    ctx.fillStyle = "rgba(255,255,255,0.92)";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
+    ctx.fillText(`Distance: ${dm.toFixed(2)} m`, 12, rect.height - 14);
+    ctx.restore();
+  }
 
   // HUD
   const deg = (p.theta_rad * 180) / Math.PI;
   poseEl.textContent = `x=${p.x_cm.toFixed(1)}cm y=${p.y_cm.toFixed(1)}cm θ=${deg.toFixed(1)}°`;
+
+  // distance
+  if (distEl) {
+    const cm = cumDistCm[idx] || 0;
+    const m = cm / 100;
+    distEl.textContent = `${m.toFixed(2)} m`;
+  }
 
   if (samples.length >= 2 && idx < samples.length - 1) {
     const dt = samples[idx + 1].ts_ms - samples[idx].ts_ms;
@@ -586,6 +820,17 @@ fileInput.addEventListener("change", async () => {
 
     // Ensure chronological
     samples.sort((a, b) => a.ts_ms - b.ts_ms);
+
+    // auto-detect torque range for trace thickness
+    maxAbsTq = 0;
+    for (const row of samples) {
+      const vals = [row.tq_fl, row.tq_fr, row.tq_rl, row.tq_rr];
+      for (const v of vals) {
+        const a = Math.abs(Number.isFinite(v) ? v : 0);
+        if (a > maxAbsTq) maxAbsTq = a;
+      }
+    }
+    if (!Number.isFinite(maxAbsTq) || maxAbsTq <= 0) maxAbsTq = 1000;
 
     recomputeAll();
     setUIEnabled(true);
