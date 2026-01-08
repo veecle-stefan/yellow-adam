@@ -142,8 +142,8 @@ DriveTrain::UserCmd DriveTrain::ReadUserCmd(RCinput::UserInput ch1, RCinput::Use
 
     if (!ch1 || !ch2 || !ch3) {
         // the value is not valid, user/signal not present or too old
-        u.throttle = 0; // safe defaults
-        u.steering = 0;
+        u.throttle = -100; // safe defaults: light braking
+        u.steering = 0; // safe defaults: steer straight
         u.aux = 0;
         u.detected = false;
 

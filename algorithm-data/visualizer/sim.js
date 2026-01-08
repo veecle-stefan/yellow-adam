@@ -27,6 +27,12 @@ const stepEl = el("step");
 const distEl = el("dist");
 const distOverlayEl = el("dist_overlay");
 
+
+const yawSourceEl = el("yaw_source");
+const yawGainEl = el("yaw_gain");
+const dsAlphaEl = el("ds_alpha");
+
+
 // ----------------------- Tier-1: Predicted ("ghost") path -----------------------
 // Projects the vehicle path from driver inputs (t + s) using a simple bicycle model.
 // NOTE: t is a TORQUE request. We therefore integrate a simple accel model.
@@ -41,6 +47,7 @@ const ghostMaxAccelEl = el("ghost_max_accel");
 const ghostMaxDecelEl = el("ghost_max_decel");
 const ghostUseGearEl = el("ghost_use_gear");
 const ghostDragEl = el("ghost_drag");
+const ghostRollEl = el("ghost_roll");
 const ghostDeadzoneEl = el("ghost_deadzone");
 const ghostSteerFlipEl = el("ghost_flip_steer");
 const ghostTorqueFlipEl = el("ghost_flip_torque");
@@ -55,10 +62,11 @@ function getGhostParams() {
   const maxDecel = clamp(Number(ghostMaxDecelEl ? ghostMaxDecelEl.value : 0.5), 0.01, 60);
   const useGear = ghostUseGearEl ? !!ghostUseGearEl.checked : true;
   const dragPerS = clamp(Number(ghostDragEl ? ghostDragEl.value : 0.0), 0, 10);
+  const rollResMps2 = clamp(Number(ghostRollEl ? ghostRollEl.value : 0.0), 0, 30);
   const deadzone = clamp(Number(ghostDeadzoneEl ? ghostDeadzoneEl.value : 10), 0, 500);
   const flipSteer = ghostSteerFlipEl ? !!ghostSteerFlipEl.checked : false;
   const flipTorque = ghostTorqueFlipEl ? !!ghostTorqueFlipEl.checked : false;
-  return { enabled, includeZoom, horizon, alpha, maxSteerDeg, maxAccel, maxDecel, useGear, dragPerS, deadzone, flipSteer, flipTorque };
+  return { enabled, includeZoom, horizon, alpha, maxSteerDeg, maxAccel, maxDecel, useGear, dragPerS, rollResMps2, deadzone, flipSteer, flipTorque };
 }
 
 function clamp01(v) {
@@ -172,6 +180,9 @@ function getConstants() {
     wheelbase_cm: Number(wheelbaseInput.value) || 50,
     wheel_circ_cm: Number(circInput.value) || 20,
     pulses_per_rev: Math.max(1, Number(pprInput.value) || 15),
+    yaw_source: yawSourceEl ? String(yawSourceEl.value) : "avg",
+    yaw_gain: clamp(Number(yawGainEl ? yawGainEl.value : 1.0), 0.2, 5.0),
+    ds_alpha: clamp(Number(dsAlphaEl ? dsAlphaEl.value : 0.3), 0.0, 1.0),
   };
 }
 
@@ -230,11 +241,30 @@ function stepPose(prev, sample, nextSample) {
     pulses_per_rev,
   );
 
-  const dL = 0.5 * (d_fl + d_rl);
-  const dR = 0.5 * (d_fr + d_rr);
+  // --- Odometry from wheel travel only (rpm_*):
+  // Yaw: do NOT use front wheels for yaw on a steered axle.
+  // Default: rear RL/RR for yaw; keep avg(left/right) as an option.
+  const { yaw_source, yaw_gain, ds_alpha } = getConstants();
 
-  const dTheta = (dL - dR) / Math.max(1e-6, track_cm);
-  const ds = 0.5 * (dR + dL);
+  let dL_yaw, dR_yaw;
+  if (yaw_source === "avg") {
+    dL_yaw = 0.5 * (d_fl + d_rl);
+    dR_yaw = 0.5 * (d_fr + d_rr);
+  } else {
+    dL_yaw = d_rl;
+    dR_yaw = d_rr;
+  }
+
+  const dTheta = yaw_gain * ((dL_yaw - dR_yaw) / Math.max(1e-6, track_cm));
+
+  // forward distance: blend rear-only with all-wheel average to reduce noise without biasing yaw
+  const ds_rear = 0.5 * (dR_yaw + dL_yaw);
+  const ds_all = 0.25 * (d_fl + d_fr + d_rl + d_rr);
+  const ds = (1 - ds_alpha) * ds_rear + ds_alpha * ds_all;
+
+  // keep names for debugging/UI
+  const dL = dL_yaw;
+  const dR = dR_yaw;
 
   // integrate in body frame (midpoint)
   const thetaMid = prev.theta_rad + dTheta * 0.5;
@@ -543,7 +573,7 @@ function accelCmdCmS2FromT(tVal, gearVal, gp) {
   if (Math.abs(t) < gp.deadzone) return 0;
 
   const n = Math.max(-1, Math.min(1, t / 1000)); // -1..1
-  const maxA = (n >= 0) ? gp.maxAccel : gp.maxDecel; // allow stronger braking
+  const maxA = (raw >= 0) ? gp.maxAccel : gp.maxDecel; // allow stronger braking
   return n * (maxA * 100); // cm/s²
 }
 
@@ -573,11 +603,40 @@ function computeGhostPoints(fromIndex) {
     const smp = samples[i] || { s: 0, t: 0, gear: 1 };
     const delta = steerAngleRadFromS(smp.s, gp);
 
-    // torque -> accel with simple linear drag
+    // torque -> accel: command + rolling resistance + optional viscous drag
+    // Determine effective torque sign (after optional gear) to prevent braking from reversing direction.
+    const rawT0 = Number.isFinite(smp.t) ? smp.t : 0;
+    const rawT = gp.flipTorque ? -rawT0 : rawT0;
+    let dirNow = 1;
+    if (gp.useGear) {
+      const g = Number.isFinite(smp.gear) ? Math.trunc(smp.gear) : 1;
+      dirNow = (g === -1) ? -1 : (g === 1) ? 1 : 0;
+    }
+    const t_eff = rawT * dirNow;
+    const brakingCmd = (rawT < -gp.deadzone);
+
     const a_cmd = accelCmdCmS2FromT(smp.t, smp.gear, gp);
+
+    // Rolling resistance (constant decel opposing motion), in cm/s²
+    const roll = (gp.rollResMps2 || 0) * 100;
+    const a_roll = (Math.abs(v) < 1e-6) ? 0 : (-Math.sign(v) * roll);
+
+    // Optional viscous drag (cm/s²)
     const a_drag = -gp.dragPerS * v;
-    const a = a_cmd + a_drag;
+
+    const a = a_cmd + a_roll + a_drag;
+    const v_prev = v;
     v = v + a * dt_s;
+    // Brakes slow to zero; they shouldn't make the vehicle start rolling backwards.
+    if (brakingCmd && Math.sign(v_prev) !== Math.sign(v)) {
+      v = 0;
+    }
+
+    // If rolling resistance would flip sign around zero while there's no strong accel cmd, clamp to stop.
+    if (v_prev !== 0 && Math.sign(v_prev) !== Math.sign(v) && Math.abs(a_cmd) < roll) {
+      v = 0;
+    }
+
     // prevent numeric runaway while tuning
     v = clamp(v, -2000, 2000); // cm/s
 
@@ -1067,7 +1126,7 @@ seek.addEventListener("input", () => {
 });
 
 // Recompute when constants change (tuning)
-for (const inp of [trackInput, wheelbaseInput, circInput, pprInput]) {
+for (const inp of [trackInput, wheelbaseInput, circInput, pprInput, yawSourceEl, yawGainEl, dsAlphaEl]) {
   inp.addEventListener("change", () => {
     if (!samples.length) return;
     const savedIdx = idx;
@@ -1088,7 +1147,10 @@ const ghostInputs = [
   ghostAlphaEl,
   ghostMaxSteerEl,
   ghostMaxAccelEl,
+  ghostMaxDecelEl,
+  ghostUseGearEl,
   ghostDragEl,
+  ghostRollEl,
   ghostDeadzoneEl,
   ghostSteerFlipEl,
   ghostTorqueFlipEl,
