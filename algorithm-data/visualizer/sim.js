@@ -25,6 +25,50 @@ const statusEl = el("status");
 const poseEl = el("pose");
 const stepEl = el("step");
 const distEl = el("dist");
+const distOverlayEl = el("dist_overlay");
+
+// ----------------------- Tier-1: Predicted ("ghost") path -----------------------
+// Projects the vehicle path from driver inputs (t + s) using a simple bicycle model.
+// NOTE: t is a TORQUE request. We therefore integrate a simple accel model.
+// All parameters are live-tunable from the HTML controls.
+
+const ghostEnabledEl = el("ghost_enabled");
+const ghostIncludeZoomEl = el("ghost_include_zoom");
+const ghostHorizonEl = el("ghost_horizon");
+const ghostAlphaEl = el("ghost_alpha");
+const ghostMaxSteerEl = el("ghost_max_steer_deg");
+const ghostMaxAccelEl = el("ghost_max_accel");
+const ghostMaxDecelEl = el("ghost_max_decel");
+const ghostUseGearEl = el("ghost_use_gear");
+const ghostDragEl = el("ghost_drag");
+const ghostDeadzoneEl = el("ghost_deadzone");
+const ghostSteerFlipEl = el("ghost_flip_steer");
+const ghostTorqueFlipEl = el("ghost_flip_torque");
+
+function getGhostParams() {
+  const enabled = ghostEnabledEl ? !!ghostEnabledEl.checked : true;
+  const includeZoom = ghostIncludeZoomEl ? !!ghostIncludeZoomEl.checked : true;
+  const horizon = clampInt(ghostHorizonEl ? Number(ghostHorizonEl.value) : 50, 5, 600);
+  const alpha = clamp01(ghostAlphaEl ? Number(ghostAlphaEl.value) : 0.22);
+  const maxSteerDeg = clamp(Number(ghostMaxSteerEl ? ghostMaxSteerEl.value : 13), 1, 80);
+  const maxAccel = clamp(Number(ghostMaxAccelEl ? ghostMaxAccelEl.value : 1.0), 0.01, 30);
+  const maxDecel = clamp(Number(ghostMaxDecelEl ? ghostMaxDecelEl.value : 0.5), 0.01, 60);
+  const useGear = ghostUseGearEl ? !!ghostUseGearEl.checked : true;
+  const dragPerS = clamp(Number(ghostDragEl ? ghostDragEl.value : 0.0), 0, 10);
+  const deadzone = clamp(Number(ghostDeadzoneEl ? ghostDeadzoneEl.value : 10), 0, 500);
+  const flipSteer = ghostSteerFlipEl ? !!ghostSteerFlipEl.checked : false;
+  const flipTorque = ghostTorqueFlipEl ? !!ghostTorqueFlipEl.checked : false;
+  return { enabled, includeZoom, horizon, alpha, maxSteerDeg, maxAccel, maxDecel, useGear, dragPerS, deadzone, flipSteer, flipTorque };
+}
+
+function clamp01(v) {
+  return Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0));
+}
+
+function clampInt(v, lo, hi) {
+  const n = Math.trunc(Number.isFinite(v) ? v : lo);
+  return Math.max(lo, Math.min(hi, n));
+}
 
 function resizeCanvas() {
   const dpr = window.devicePixelRatio || 1;
@@ -38,8 +82,9 @@ resizeCanvas();
 
 // ----------------------- Data + Simulation State -----------------------
 
-let samples = []; // {ts_ms, s, tq_fl,tq_fr,tq_rl,tq_rr, rpm_fl,rpm_fr,rpm_rl,rpm_rr}
+let samples = []; // {ts_ms, t, s, tq_fl,tq_fr,tq_rl,tq_rr, cu_*, vf/vr, tf/tr, rpm_*}
 let poses = []; // pose per index: {x_cm, y_cm, theta_rad}
+let stepInfo = []; // per pose index i (except last): {dt_s, ds_cm, v_meas_cm_s}
 let wheelPaths = {
   fl: [],
   fr: [],
@@ -91,8 +136,11 @@ function parseCSV(text) {
 
     const s = {
       ts_ms: Number(cols[h.ts_ms]),
+      // optional driver inputs
+      t: h.t != null ? Number(cols[h.t]) : 0,
       // optional inputs (missing cols default to 0)
       s: h.s != null ? Number(cols[h.s]) : 0,
+      gear: h.gear != null ? Number(cols[h.gear]) : 1,
       tq_fl: h.tq_fl != null ? Number(cols[h.tq_fl]) : 0,
       tq_fr: h.tq_fr != null ? Number(cols[h.tq_fr]) : 0,
       tq_rl: h.tq_rl != null ? Number(cols[h.tq_rl]) : 0,
@@ -222,6 +270,7 @@ function recomputeAll() {
   poses = [];
   wheelPaths = { fl: [], fr: [], rl: [], rr: [] };
   cumDistCm = [];
+  stepInfo = [];
   bounds = { minX: 0, minY: 0, maxX: 0, maxY: 0, init: false };
 
   const p0 = { x_cm: 0, y_cm: 0, theta_rad: 0 };
@@ -259,6 +308,10 @@ function recomputeAll() {
     };
     poses.push(p);
 
+    // store measured step info (for ghost-path blending / diagnostics)
+    const v_meas_cm_s = stepped.dt_s > 0 ? stepped.ds / stepped.dt_s : 0;
+    stepInfo.push({ dt_s: stepped.dt_s, ds_cm: stepped.ds, v_meas_cm_s });
+
     // cumulative distance from center ds
     const prevDist = cumDistCm[i] || 0;
     cumDistCm.push(prevDist + (Number.isFinite(stepped.ds) ? stepped.ds : 0));
@@ -279,6 +332,9 @@ function recomputeAll() {
 
     for (const wp of [fl, fr, rl, rr]) updateBounds(wp.x_cm, wp.y_cm);
   }
+
+  // last pose has no forward step
+  stepInfo.push({ dt_s: 0, ds_cm: 0, v_meas_cm_s: 0 });
 
   idx = 0;
   seek.max = Math.max(0, poses.length - 1);
@@ -328,6 +384,20 @@ function updateCameraTargets(uptoIndex) {
       maxX = Math.max(maxX, p.x_cm);
       minY = Math.min(minY, p.y_cm);
       maxY = Math.max(maxY, p.y_cm);
+    }
+  }
+
+  // Optionally include the projected (ghost) path in the camera bounds.
+  // This prevents the ghost from being outside the zoomed view.
+  const gp = getGhostParams();
+  if (gp.enabled && gp.includeZoom) {
+    const g = computeGhostPoints(uptoIndex);
+    for (const pt of g) {
+      if (!pt) continue;
+      minX = Math.min(minX, pt.x_cm);
+      maxX = Math.max(maxX, pt.x_cm);
+      minY = Math.min(minY, pt.y_cm);
+      maxY = Math.max(maxY, pt.y_cm);
     }
   }
 
@@ -449,6 +519,107 @@ function tqToLineWidthPx(tq) {
   const n = Math.min(1, a / denom);
   // tune these if you want thicker/thinner traces
   return 1.0 + n * 7.0;
+}
+
+function steerAngleRadFromS(sVal, gp) {
+  const raw = Number.isFinite(sVal) ? sVal : 0;
+  const s = gp.flipSteer ? -raw : raw;
+  const n = Math.max(-1, Math.min(1, s / 1000));
+  return (n * gp.maxSteerDeg * Math.PI) / 180;
+}
+
+function accelCmdCmS2FromT(tVal, gearVal, gp) {
+  const raw0 = Number.isFinite(tVal) ? tVal : 0;
+  const raw = gp.flipTorque ? -raw0 : raw0;
+
+  // Optional gear handling: -1 reverse, 0 neutral, +1 drive
+  let dir = 1;
+  if (gp.useGear) {
+    const g = Number.isFinite(gearVal) ? Math.trunc(gearVal) : 1;
+    dir = (g === -1) ? -1 : (g === 1) ? 1 : 0;
+  }
+
+  let t = raw * dir;
+  if (Math.abs(t) < gp.deadzone) return 0;
+
+  const n = Math.max(-1, Math.min(1, t / 1000)); // -1..1
+  const maxA = (n >= 0) ? gp.maxAccel : gp.maxDecel; // allow stronger braking
+  return n * (maxA * 100); // cm/s²
+}
+
+function computeGhostPoints(fromIndex) {
+  const gp = getGhostParams();
+  if (!gp.enabled) return [];
+  if (!poses.length || !samples.length || fromIndex >= poses.length - 1) return [];
+
+  const { wheelbase_cm } = getConstants();
+  const N = Math.min(gp.horizon, (poses.length - 1) - fromIndex);
+  if (N <= 1) return [];
+
+  let x = poses[fromIndex].x_cm;
+  let y = poses[fromIndex].y_cm;
+  let theta = poses[fromIndex].theta_rad;
+
+  // start with measured speed at current index so the ghost begins aligned with reality
+  let v = (stepInfo[fromIndex] && Number.isFinite(stepInfo[fromIndex].v_meas_cm_s)) ? stepInfo[fromIndex].v_meas_cm_s : 0;
+
+  const pts = [{ x_cm: x, y_cm: y }];
+
+  for (let k = 0; k < N; k++) {
+    const i = fromIndex + k;
+    const dt_s = (stepInfo[i] && stepInfo[i].dt_s) ? stepInfo[i].dt_s : 0.1;
+    if (dt_s <= 0) continue;
+
+    const smp = samples[i] || { s: 0, t: 0, gear: 1 };
+    const delta = steerAngleRadFromS(smp.s, gp);
+
+    // torque -> accel with simple linear drag
+    const a_cmd = accelCmdCmS2FromT(smp.t, smp.gear, gp);
+    const a_drag = -gp.dragPerS * v;
+    const a = a_cmd + a_drag;
+    v = v + a * dt_s;
+    // prevent numeric runaway while tuning
+    v = clamp(v, -2000, 2000); // cm/s
+
+    // bicycle model: yaw_rate = v / wheelbase * tan(delta)
+    const yawRate = wheelbase_cm > 0 ? (v / wheelbase_cm) * Math.tan(delta) : 0;
+    const dTheta = yawRate * dt_s;
+    const ds = v * dt_s;
+
+    // midpoint integration
+    const thetaMid = theta + dTheta * 0.5;
+    x += ds * Math.cos(thetaMid);
+    y += ds * Math.sin(thetaMid);
+    theta += dTheta;
+
+    pts.push({ x_cm: x, y_cm: y });
+  }
+
+  return pts;
+}
+
+function drawGhostPath(fromIndex) {
+  const gp = getGhostParams();
+  if (!gp.enabled) return;
+  const pts = computeGhostPoints(fromIndex);
+  if (!pts || pts.length < 2) return;
+
+  ctx.save();
+  ctx.strokeStyle = `rgba(255,255,255,${gp.alpha})`;
+  ctx.lineWidth = 2;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.setLineDash([6, 6]);
+
+  const p0 = worldToScreen(pts[0].x_cm, pts[0].y_cm);
+  ctx.beginPath();
+  ctx.moveTo(p0.x, p0.y);
+  for (let i = 1; i < pts.length; i++) {
+    const ps = worldToScreen(pts[i].x_cm, pts[i].y_cm);
+    ctx.lineTo(ps.x, ps.y);
+  }
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawWheelTraces(uptoIndex) {
@@ -691,6 +862,10 @@ function draw() {
   // show wheel traces up to idx
   drawWheelTraces(idx);
 
+  // Tier-1: transparent projected path from driver inputs (t + s)
+  // Draw after the wheel traces so it stays visible.
+  drawGhostPath(idx);
+
   // draw steering indicator (perpendicular line)
   const p = poses[idx] || { x_cm: 0, y_cm: 0, theta_rad: 0 };
   const steerVal = samples[idx] ? samples[idx].s : 0;
@@ -705,11 +880,22 @@ function draw() {
     const dcm = cumDistCm[idx] || 0;
     const dm = dcm / 100.0;
     ctx.save();
+    // small background pill for readability
+    const text = `Distance: ${dm.toFixed(2)} m`;
+    ctx.font = "13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+    const tw = ctx.measureText(text).width;
+    ctx.fillStyle = "rgba(10,14,18,0.70)";
+    ctx.strokeStyle = "rgba(255,255,255,0.20)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    roundRect(ctx, 8, rect.height - 32, tw + 18, 24, 10);
+    ctx.fill();
+    ctx.stroke();
     ctx.font = "13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
     ctx.fillStyle = "rgba(255,255,255,0.92)";
     ctx.textAlign = "left";
     ctx.textBaseline = "alphabetic";
-    ctx.fillText(`Distance: ${dm.toFixed(2)} m`, 12, rect.height - 14);
+    ctx.fillText(text, 17, rect.height - 14);
     ctx.restore();
   }
 
@@ -722,6 +908,12 @@ function draw() {
     const cm = cumDistCm[idx] || 0;
     const m = cm / 100;
     distEl.textContent = `${m.toFixed(2)} m`;
+  }
+
+  if (distOverlayEl) {
+    const cm = cumDistCm[idx] || 0;
+    const m = cm / 100;
+    distOverlayEl.textContent = `Distance: ${m.toFixed(2)} m`;
   }
 
   if (samples.length >= 2 && idx < samples.length - 1) {
@@ -883,6 +1075,34 @@ for (const inp of [trackInput, wheelbaseInput, circInput, pprInput]) {
     idx = clamp(savedIdx, 0, poses.length - 1);
     seek.value = String(idx);
     seekLabel.textContent = `${idx} / ${Math.max(0, poses.length - 1)}`;
+    updateCameraTargets(idx);
+    draw();
+  });
+}
+
+// Live-tune ghost parameters while paused (or playing)
+const ghostInputs = [
+  ghostEnabledEl,
+  ghostIncludeZoomEl,
+  ghostHorizonEl,
+  ghostAlphaEl,
+  ghostMaxSteerEl,
+  ghostMaxAccelEl,
+  ghostDragEl,
+  ghostDeadzoneEl,
+  ghostSteerFlipEl,
+  ghostTorqueFlipEl,
+].filter(Boolean);
+
+for (const gi of ghostInputs) {
+  gi.addEventListener("input", () => {
+    // keep playing state; just redraw with new params
+    if (!poses.length) return;
+    updateCameraTargets(idx);
+    draw();
+  });
+  gi.addEventListener("change", () => {
+    if (!poses.length) return;
     updateCameraTargets(idx);
     draw();
   });

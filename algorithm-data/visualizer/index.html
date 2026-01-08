@@ -18,7 +18,7 @@
                 color: #e8eef7;
             }
             header {
-                padding: 12px 14px;
+                padding: 10px 14px;
                 display: flex;
                 gap: 14px;
                 align-items: center;
@@ -29,6 +29,7 @@
                 display: flex;
                 gap: 10px;
                 align-items: center;
+                flex-wrap: wrap;
             }
             label {
                 font-size: 12px;
@@ -48,6 +49,9 @@
             input[type="range"] {
                 width: min(520px, 75vw);
             }
+            input[type="checkbox"] {
+                transform: translateY(1px);
+            }
             button {
                 padding: 8px 12px;
                 border-radius: 12px;
@@ -63,9 +67,17 @@
                 opacity: 0.75;
                 font-size: 12px;
             }
+            .pill {
+                padding: 6px 10px;
+                border: 1px solid #263246;
+                background: #0f141b;
+                border-radius: 999px;
+                font-size: 12px;
+                opacity: 0.9;
+            }
             #wrap {
                 position: relative;
-                height: calc(100vh - 64px);
+                height: calc(100vh - 86px);
             }
             canvas {
                 width: 100%;
@@ -82,12 +94,28 @@
                 padding: 10px 12px;
                 border-radius: 12px;
                 backdrop-filter: blur(6px);
-                max-width: 360px;
+                max-width: 380px;
             }
             #hud code {
                 font-family:
                     ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
                 font-size: 11px;
+            }
+            #dist_overlay {
+                position: absolute;
+                left: 10px;
+                bottom: 10px;
+                font:
+                    13px ui-monospace,
+                    SFMono-Regular,
+                    Menlo,
+                    Consolas,
+                    monospace;
+                background: rgba(10, 14, 18, 0.7);
+                border: 1px solid rgba(38, 50, 70, 0.7);
+                padding: 8px 10px;
+                border-radius: 12px;
+                backdrop-filter: blur(6px);
             }
         </style>
     </head>
@@ -144,10 +172,109 @@
                     <input id="ppr" type="number" step="1" value="60" />
                 </label>
             </div>
+
+            <span class="pill">Ghost tuning (pause + adjust live)</span>
+
+            <div class="group">
+                <label
+                    ><input id="ghost_enabled" type="checkbox" checked />
+                    Ghost</label
+                >
+                <label
+                    >Horizon
+                    <input
+                        id="ghost_horizon"
+                        type="number"
+                        step="1"
+                        min="1"
+                        value="80"
+                    />
+                    <span class="muted">steps</span>
+                </label>
+                <label
+                    >Max steer
+                    <input
+                        id="ghost_max_steer_deg"
+                        type="number"
+                        step="0.5"
+                        value="13"
+                    />
+                    <span class="muted">deg</span>
+                </label>
+                <label
+                    ><input id="ghost_flip_steer" type="checkbox" /> Flip
+                    steer</label
+                >
+                <label
+                    >Max accel
+                    <input
+                        id="ghost_max_accel"
+                        type="number"
+                        step="0.1"
+                        value="1.0"
+                    />
+                    <span class="muted">m/s²</span>
+                </label>
+                <label
+                    >Max decel
+                    <input
+                        id="ghost_max_decel"
+                        type="number"
+                        step="0.1"
+                        value="0.5"
+                    />
+                    <span class="muted">m/s²</span>
+                </label>
+                <label
+                    ><input id="ghost_use_gear" type="checkbox" checked /> Use
+                    gear</label
+                >
+
+                <label
+                    ><input id="ghost_flip_torque" type="checkbox" /> Flip
+                    torque</label
+                >
+                <label
+                    >Drag
+                    <input
+                        id="ghost_drag"
+                        type="number"
+                        step="0.01"
+                        value="0.00"
+                    />
+                    <span class="muted">1/s</span>
+                </label>
+                <label
+                    >Deadzone
+                    <input
+                        id="ghost_deadzone"
+                        type="number"
+                        step="1"
+                        value="10"
+                    />
+                    <span class="muted">t units</span>
+                </label>
+                <label
+                    >Include in zoom
+                    <input id="ghost_include_zoom" type="checkbox" checked />
+                </label>
+                <label
+                    >Opacity
+                    <input
+                        id="ghost_alpha"
+                        type="number"
+                        step="0.02"
+                        min="0"
+                        max="1"
+                        value="0.22"
+                    />
+                </label>
+            </div>
         </header>
 
         <div id="wrap">
             <canvas id="c"></canvas>
+            <div id="dist_overlay">Distance: 0.00 m</div>
             <div id="hud">
                 <div><b>Status:</b> <span id="status">Load a CSV.</span></div>
                 <div>
@@ -155,8 +282,8 @@
                 </div>
                 <div><b>Step:</b> <code id="step">dt=0ms</code></div>
                 <div class="muted" style="margin-top: 8px">
-                    Model: integrate wheel distances → differential update using
-                    (FL+RL)/2 vs (FR+RR)/2.
+                    Odometry θ: still from all 4 wheels (as in your current
+                    sim).
                 </div>
             </div>
         </div>
