@@ -30,9 +30,10 @@ struct VehicleState {
     bool externalControl = false;
     uint32_t lastExtThrottle = 0;
     uint32_t lastExtSteering = 0;
-    uint16_t maxSpeedForward = 200;
+    uint16_t maxSpeedForward = 150;
     uint16_t maxSpeedReverse = 60;
-    uint16_t maxPower = 300;
+    uint16_t maxDrivePower = 300;
+    uint16_t maxBrakePower = 750;
     bool reqPowerOff = false;
 };
 
@@ -65,13 +66,15 @@ enum DriveCommand {
     EnableExternalControl,
     SetHeadlight,
     Steer,
-    PowerOff
+    PowerOff,
+    TuneTVParam
 };
 
 union CommandParameter {
         int16_t i16;
         uint16_t u16;
         uint8_t u8;
+        float f16;
         bool onOff;
     };
 
@@ -99,8 +102,9 @@ public:
     void SendHeadlight(uint8_t mode, bool on);
     void SendPowerOff();
     void SendSteer(int16_t throttle, int16_t steer);
+    void SendTuneTV(uint16_t id, float value);
 
-protected:
+protected :
     // ----- Types -----
     using MotorStates = std::optional<Axle::HistoryFrame>;
     using UserInput = RCinput::UserInput;
@@ -124,7 +128,7 @@ protected:
         MotorStates lastFront;
         MotorStates lastRear;
 
-        DriveParams params;
+        DriveParams* params;
     };
 
     struct Torques {

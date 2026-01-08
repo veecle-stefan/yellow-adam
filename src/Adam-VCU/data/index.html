@@ -338,6 +338,35 @@
 </div>
 </div>
 </details>
+<details class="limits" id="tuning_panel">
+  <summary>
+    <span>Tuning</span>
+    <span style="color:rgba(138,147,166,0.9); font-weight:900; font-size:12px;">TV params (id-based)</span>
+  </summary>
+
+  <div class="limitsBody" style="gap:14px;">
+    <div class="lrow" style="grid-template-columns:110px 1fr;">
+      <label for="tune_key">Parameter</label>
+      <select id="tune_key"></select>
+    </div>
+
+    <div class="lrow">
+      <label for="tune_value">Value</label>
+      <input id="tune_value" type="number" step="0.001" />
+      <span class="out" id="tune_value_out">—</span>
+    </div>
+
+    <div class="lrow">
+      <label for="tune_slider">Slider</label>
+      <input id="tune_slider" type="range" />
+      <span class="out" id="tune_minmax">min..max</span>
+    </div>
+
+    <div class="limitsActions">
+      <button class="primary" id="btn_send_tune" type="button">Send tuning</button>
+    </div>
+  </div>
+</details>
 <div class="foot">
 <div class="pill" id="ws_state">ws: ...</div>
 <div class="pill" id="mode_state">mode: ws</div>

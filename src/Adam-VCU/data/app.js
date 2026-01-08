@@ -175,6 +175,171 @@ function initProfilesUI(){
 
 initProfilesUI();
 
+// ---------- TV Tuning (id-based, no key strings sent) ----------
+// IMPORTANT: ID must match the table index in driveParams.cpp (kTVParams order).
+// You said it's OK to hard-code this in JS to save memory on ESP32.
+const tuningKeys = [
+  { id: 0,  name: "MaxTorquePerTick",      min: 0.0, max: 1.0 },
+  { id: 1,  name: "SteerTorqueLowFactor",  min: 0.0, max: 1.0 },
+  { id: 2,  name: "SteerTorqueHighFactor", min: 0.0, max: 1.0 },
+  { id: 3,  name: "SteerTorqueHighSpeed",  min: 0.0, max: 500.0 },
+
+  { id: 4,  name: "RearFadeSpeed0",        min: 0.0, max: 500.0 },
+  { id: 5,  name: "RearFadeSpeed1",        min: 0.0, max: 500.0 },
+  { id: 6,  name: "RearFadeThrottle0",     min: 0.0, max: 1.0 },
+  { id: 7,  name: "RearFadeThrottle1",     min: 0.0, max: 1.0 },
+
+  { id: 8,  name: "SteerTorqueFront",      min: 0.0, max: 1000.0 },
+  { id: 9,  name: "SteerTorqueRear",       min: 0.0, max: 1000.0 },
+
+  { id: 10, name: "SlipRatio",             min: 0.0, max: 1.0 },
+  { id: 11, name: "SlipDownFactor",        min: 0.0, max: 1.0 },
+  { id: 12, name: "SlipMinScale",          min: 0.0, max: 1.0 },
+  { id: 13, name: "SlipRecoverPerTick",    min: 0.0, max: 1.0 },
+  { id: 14, name: "SlipSpeedEps",          min: 0.0, max: 500.0 },
+  { id: 15, name: "SlipTorqueEps",         min: 0.0, max: 1.0 },
+
+  { id: 16, name: "DriveFrontShareLow",    min: 0.0, max: 1.0 },
+  { id: 17, name: "DriveFrontShareHigh",   min: 0.0, max: 1.0 },
+  { id: 18, name: "BrakeFrontShareLow",    min: 0.0, max: 1.0 },
+  { id: 19, name: "BrakeFrontShareHigh",   min: 0.0, max: 1.0 },
+  { id: 20, name: "BiasHighThrottle",      min: 0.0, max: 5.0 },
+];
+
+const tuneKeyEl    = document.getElementById("tune_key");
+const tuneValueEl  = document.getElementById("tune_value");
+const tuneValueOut = document.getElementById("tune_value_out");
+const tuneSliderEl = document.getElementById("tune_slider");
+const tuneMinMaxEl = document.getElementById("tune_minmax");
+const btnSendTune  = document.getElementById("btn_send_tune");
+
+// Persist last values locally so the input is populated when switching params.
+// Last (and initial) values shown/sent per param id.
+// Initialized from the C++ TVParams defaults so the UI matches firmware at first load.
+const tuningLast = {
+  0:  0.3,   // MaxTorquePerTick
+  1:  1.0,   // SteerTorqueLowFactor
+  2:  0.5,   // SteerTorqueHighFactor
+  3:  50.0,  // SteerTorqueHighSpeed
+
+  4:  15.0,  // RearFadeSpeed0
+  5:  30.0,  // RearFadeSpeed1
+  6:  0.05,  // RearFadeThrottle0
+  7:  0.3,   // RearFadeThrottle1
+
+  8:  250.0, // SteerTorqueFront
+  9:  250.0, // SteerTorqueRear
+
+  10: 0.20,  // SlipRatio
+  11: 0.70,  // SlipDownFactor
+  12: 0.25,  // SlipMinScale
+  13: 0.20,  // SlipRecoverPerTick
+  14: 20.0,  // SlipSpeedEps
+  15: 0.10,  // SlipTorqueEps
+
+  16: 0.55,  // DriveFrontShareLow
+  17: 0.30,  // DriveFrontShareHigh
+  18: 0.60,  // BrakeFrontShareLow
+  19: 0.80,  // BrakeFrontShareHigh
+  20: 0.60,  // BiasHighThrottle
+};
+
+function fmt3(x){
+  const n = Number(x);
+  if(!Number.isFinite(n)) return "0";
+  // Keep short but readable
+  return (Math.round(n * 1000) / 1000).toString();
+}
+
+function clamp01(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+
+function setTuneUIForParam(p){
+  if(!p) return;
+
+  // Slider setup
+  tuneSliderEl.min  = String(p.min);
+  tuneSliderEl.max  = String(p.max);
+  // Slider step: make it usable for both [0..1] params and large ranges.
+  const range = Math.abs(p.max - p.min);
+  let step = 0.05;                 // good default for 0..1 params
+  if (range > 1.0) step = range / 100;  // ~1000 steps across range
+  if (step < 0.001) step = 0.001;
+
+  tuneSliderEl.step = String(step);
+  tuneValueEl.step  = String(step);
+
+  // Value: use last sent or mid of range
+  const last = (tuningLast[p.id] != null) ? tuningLast[p.id] : p.min;
+  const v = clamp01(last, p.min, p.max);
+
+  tuneValueEl.value = fmt3(v);
+  tuneSliderEl.value = String(v);
+
+  tuneMinMaxEl.textContent = `${p.min} .. ${p.max}`;
+  tuneValueOut.textContent = fmt3(v);
+}
+
+function currentTuningParam(){
+  const id = Number(tuneKeyEl?.value ?? 0);
+  return tuningKeys.find(x => x.id === id) || tuningKeys[0];
+}
+
+function initTuningUI(){
+  if(!tuneKeyEl || !tuneValueEl || !tuneSliderEl || !btnSendTune) return;
+
+  // Populate dropdown
+  tuneKeyEl.innerHTML = "";
+  for(const p of tuningKeys){
+    const opt = document.createElement("option");
+    opt.value = String(p.id);
+    opt.textContent = `${p.name}`;
+    tuneKeyEl.appendChild(opt);
+  }
+
+  // Default: first entry
+  tuneKeyEl.value = String(tuningKeys[0].id);
+  setTuneUIForParam(tuningKeys[0]);
+
+  // When selecting another param, update UI and preserve last value for each id
+  tuneKeyEl.addEventListener("change", () => {
+    setTuneUIForParam(currentTuningParam());
+  });
+
+  // Keep number + slider in sync
+  tuneSliderEl.addEventListener("input", () => {
+    const p = currentTuningParam();
+    const v = clamp01(Number(tuneSliderEl.value), p.min, p.max);
+    tuneValueEl.value = fmt3(v);
+    tuneValueOut.textContent = fmt3(v);
+  });
+
+  tuneValueEl.addEventListener("input", () => {
+    const p = currentTuningParam();
+    const v = clamp01(Number(tuneValueEl.value), p.min, p.max);
+    tuneSliderEl.value = String(v);
+    tuneValueOut.textContent = fmt3(v);
+  });
+
+  // Send tuning command
+  btnSendTune.addEventListener("click", () => {
+    const p = currentTuningParam();
+    const v = clamp01(Number(tuneValueEl.value), p.min, p.max);
+
+    tuningLast[p.id] = v;
+
+    // Protocol: id + f16
+    // (Your firmware consumes extCmd.p1.u16=id and extCmd.p1.f16=value)
+    wsSend({ type:"cmd", name:"tune_tv", id: p.id, v });
+
+    // keep UI consistent
+    tuneValueEl.value = fmt3(v);
+    tuneSliderEl.value = String(v);
+    tuneValueOut.textContent = fmt3(v);
+  });
+}
+
+initTuningUI();
+
 // ---------- UI helpers ----------
 function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
 
@@ -368,13 +533,20 @@ class SparkChart {
     const usableH = bot - top;
 
     const {min, max} = this._minMax(arr);
+    const MIN_RANGE = 100;              // pick in your units (e.g. current mA/torque units)
+    let lo = min, hi = max;
+    if ((hi - lo) < MIN_RANGE) {
+      const mid = 0.5 * (hi + lo);
+      lo = mid - 0.5 * MIN_RANGE;
+      hi = mid + 0.5 * MIN_RANGE;
+    }
 
     ctx.strokeStyle = color;
     ctx.lineWidth = Math.max(1, Math.floor(h * 0.010));
     ctx.beginPath();
     for(let i=0;i<n;i++){
       const x = (i / (n - 1)) * (w - 1);
-      const yN = (arr[i] - min) / (max - min);
+      const yN = (arr[i] - lo) / (hi - lo);
       const y = bot - yN * usableH;
       if(i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);

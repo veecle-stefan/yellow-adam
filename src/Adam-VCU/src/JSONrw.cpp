@@ -116,6 +116,27 @@ bool JSONInteraction::DispatchCommand(const String& msg, DriveTrain* drive)
       return true;
     }
 
+    // tuning: {"type":"cmd","name":"tune_tv","id":12,"v":0.35}
+    if (name == "tune_tv")
+    {
+      int id = -1;
+      float v = 0.f;
+
+      int p = msg.indexOf("\"id\":");
+      if (p >= 0)
+        id = msg.substring(p + 5).toInt();
+
+      p = msg.indexOf("\"v\":");
+      if (p >= 0)
+        v = msg.substring(p + 4).toFloat();
+
+      if (id >= 0)
+      {
+        drive->SendTuneTV((uint16_t)id, v); // queues DriveCommand::TuneTVParam
+        return true;
+      }
+      return false;
+    }
   }
 
   // Unknown / unsupported

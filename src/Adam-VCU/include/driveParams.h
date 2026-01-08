@@ -100,12 +100,7 @@ struct DriveParams
         // Maximum yaw-assist differential torque applied on the rear axle.
         // Stabilizes / assists turning but is NOT a steering actuator.
         // Default: 200.0
-        float SteerTorqueRear = 200.f;
-
-        // Absolute per-wheel torque limit sent to motor controllers.
-        // All torque commands are clamped to [-MaxOutputLimit .. +MaxOutputLimit].
-        // Default: 400.0
-        float MaxOutputLimit = 400.f;
+        float SteerTorqueRear = 250.f;
 
         // -------------------------------------------------------------------------
         // ABS / ASR – very simple reactive slip control (per-wheel scaling)
@@ -129,7 +124,7 @@ struct DriveParams
 
         // Recovery rate per tick when no slip is detected (towards 1.0).
         // Default: 0.10
-        float SlipRecoverPerTick = 0.10f;
+        float SlipRecoverPerTick = 0.20f;
 
         // Minimum reference speed to activate slip detection (noise floor).
         // Default: 10.0
@@ -164,4 +159,33 @@ struct DriveParams
 
     // Convenience: constexpr-like default instance (still mutable at runtime).
     static DriveParams Defaults() { return DriveParams{}; }
+};
+
+// -----------------------------------------------------------------------------
+// Tuning (TV only)
+// -----------------------------------------------------------------------------
+// Thin utility for live tuning. Uses stable numeric IDs (table index).
+// This is queue-friendly and avoids passing strings across tasks.
+//
+class Tuning
+{
+public:
+    // Set TV param by numeric id (table index). Clamps inside.
+    // Returns false if id is out of range.
+    static bool SetByID(DriveParams::TVParams* tv, uint16_t id, float value);
+
+    // Returns number of tunable TV params (IDs range: [0..Count-1]).
+    static uint16_t Count();
+
+    // Returns the human-readable key for a param id, or nullptr if invalid.
+    static const char *Key(uint16_t id);
+
+    // Reads the current value of a param by id. Returns false if invalid id.
+    static bool GetByID(const DriveParams::TVParams &tv, uint16_t id, float &outValue);
+
+    // Reads min/max limits for a param id. Returns false if invalid id.
+    static bool GetLimitsByID(uint16_t id, float &outLo, float &outHi);
+
+    // Maps a key string to an id (so WS handler can convert key->id before queueing).
+    static bool IdByKey(const char *key, uint16_t &outId);
 };
