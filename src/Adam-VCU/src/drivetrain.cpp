@@ -396,7 +396,7 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, VehicleS
 
         if (n == 1) return arr[0];
         if (n == 2) return 0.5f * (arr[0] + arr[1]);
-        return arr[1]; // n==3
+        return arr[1]; // fine for n==3 or n==4 here
     };
 
     // Precompute abs speeds
@@ -550,6 +550,7 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, VehicleS
 
     // Steering intent (coast yaw assist): enable smoothly with steering magnitude
     // (Pick a small deadband to avoid noise around zero steering.)
+    // TODO: don't hardcode here, use DriveParams instead
     const float s0 = 0.05f; // steering where assist starts (~5%)
     const float s1 = 0.25f; // steering where assist is fully enabled (~25%)
     float uSteer = (absS - s0) / (s1 - s0);
