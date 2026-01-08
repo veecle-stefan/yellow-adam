@@ -2,7 +2,7 @@
 #include <ArduinoOTA.h>
 #include <WiFi.h>
 #include "drivetrain.h"
-#include "captiveportal.h"
+#include "webserver.h"
 #include "JSONrw.h"
 
 Axle axleF(UART_NUM_1, HWConfig::Pins::UART::Front::RX, HWConfig::Pins::UART::Front::TX);
@@ -13,7 +13,7 @@ DriveTrain* drive = NULL;
 static const char* AP_SSID = "Adam";
 static const char* AP_PASS = "opeladam2026"; // >= 8 chars recommended
 static const char* hostname = "adam";
-CaptivePortalWeb portal;
+WebServer portal;
 JSONInteraction json(400);
 
 // Example "other code" that must keep running

@@ -8,11 +8,11 @@
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 
-class CaptivePortalWeb {
+class WebServer {
 public:
   using WsMessageHandler = std::function<void(const String& msg)>;
 
-  CaptivePortalWeb();
+  WebServer();
 
   // Start LittleFS + DNS captive portal + HTTP + WebSocket
   // apIp should usually be WiFi.softAPIP() (often 192.168.4.1)

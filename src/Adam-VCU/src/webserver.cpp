@@ -1,15 +1,15 @@
 #include <Arduino.h>
-#include "captiveportal.h"
+#include "webserver.h"
 
 static constexpr uint16_t DNS_PORT = 53;
 static constexpr uint16_t HTTP_PORT = 80;
 
-CaptivePortalWeb::CaptivePortalWeb()
+WebServer::WebServer()
 : _server(HTTP_PORT),
   _ws("/ws") {
 }
 
-bool CaptivePortalWeb::begin(const IPAddress& apIp, const char* hostname)
+bool WebServer::begin(const IPAddress& apIp, const char* hostname)
 {
   _apIp = apIp;
 
@@ -41,24 +41,24 @@ bool CaptivePortalWeb::begin(const IPAddress& apIp, const char* hostname)
   return true;
 }
 
-void CaptivePortalWeb::loop()
+void WebServer::loop()
 {
   if (!_started) return;
   // _dns.processNextRequest();  // keep captive portal DNS responsive
 }
 
-void CaptivePortalWeb::broadcastText(const char* msg)
+void WebServer::broadcastText(const char* msg)
 {
   if (!_started) return;
   _ws.textAll(msg);
 }
 
-void CaptivePortalWeb::onWsMessage(WsMessageHandler cb)
+void WebServer::onWsMessage(WsMessageHandler cb)
 {
   _wsCb = std::move(cb);
 }
 
-void CaptivePortalWeb::_setupWebSocket()
+void WebServer::_setupWebSocket()
 {
   _ws.onEvent([this](AsyncWebSocket* server,
                      AsyncWebSocketClient* client,
@@ -102,7 +102,7 @@ void CaptivePortalWeb::_setupWebSocket()
   _server.addHandler(&_ws);
 }
 
-bool CaptivePortalWeb::_isCaptivePortalRequest(AsyncWebServerRequest* request)
+bool WebServer::_isCaptivePortalRequest(AsyncWebServerRequest* request)
 {
   // Captive portals often hit URLs like:
   // /generate_204, /hotspot-detect.html, /ncsi.txt, etc.
@@ -118,7 +118,7 @@ bool CaptivePortalWeb::_isCaptivePortalRequest(AsyncWebServerRequest* request)
   return true;
 }
 
-void CaptivePortalWeb::_setupRoutes()
+void WebServer::_setupRoutes()
 {
   // Serve static files
   _server.serveStatic("/", LittleFS, "/")

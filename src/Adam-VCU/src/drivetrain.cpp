@@ -1,11 +1,12 @@
 #include "drivetrain.h"
+#include "driveParams.h"
 #include "swconfig.h"
 
 // ----- Constructor -----
 DriveTrain::DriveTrain(Axle& axleF, Axle& axleR, Lights& lights)
-    : ch1(HWConfig::Pins::PPM::Channel1, DriveConfig::DeadBand)
-    , ch2(HWConfig::Pins::PPM::Channel2, DriveConfig::DeadBand)
-    , ch3(HWConfig::Pins::PPM::Channel3, DriveConfig::DeadBand)
+    : ch1(HWConfig::Pins::PPM::Channel1, SWConfig::InputFiltering::DeadBand)
+    , ch2(HWConfig::Pins::PPM::Channel2, SWConfig::InputFiltering::DeadBand)
+    , ch3(HWConfig::Pins::PPM::Channel3, SWConfig::InputFiltering::DeadBand)
     , axleF(axleF)
     , axleR(axleR)
     , lights(lights)
@@ -149,8 +150,8 @@ DriveTrain::UserCmd DriveTrain::ReadUserCmd(RCinput::UserInput ch1, RCinput::Use
         u.aux      = *ch2;
         u.detected = true;
 
-        u.someInput = (abs(u.throttle) > DriveConfig::DeadBand) || (abs(u.steering) > DriveConfig::DeadBand);
-        bool auxSign = u.aux > DriveConfig::DeadBand;
+        u.someInput = (abs(u.throttle) > SWConfig::InputFiltering::DeadBand) || (abs(u.steering) > SWConfig::InputFiltering::DeadBand);
+        bool auxSign = u.aux > SWConfig::InputFiltering::DeadBand;
         if (auxSign != lastAuxSign) {
             u.auxPressed = true; // only this tick
         }
@@ -158,7 +159,7 @@ DriveTrain::UserCmd DriveTrain::ReadUserCmd(RCinput::UserInput ch1, RCinput::Use
     }
 
     
-    const bool braking = (u.throttle < -DriveConfig::Brakes::DetectThreshold);
+    const bool braking = (u.throttle < -SWConfig::InputFiltering::DeadBand);
 
     if (braking) {
         if (!isTapping) {
@@ -168,9 +169,10 @@ DriveTrain::UserCmd DriveTrain::ReadUserCmd(RCinput::UserInput ch1, RCinput::Use
         }
     } else if (isTapping) {
         // released
-        if ((nowMs - lastTap) < DriveConfig::Brakes::TapTime) {
+        if ((nowMs - lastTap) < SWConfig::UserBehaviour::TapTimeMs) {
             tapCount++;
-            if ((nowMs - firstTap) < DriveConfig::Brakes::DoubleTapTime) {
+            if ((nowMs - firstTap) < SWConfig::UserBehaviour::DoubleTapTimeMs)
+            {
                 if (tapCount == 2) {
                     u.doubleTap = true;
                     tapCount = 0;
@@ -216,12 +218,12 @@ uint8_t DriveTrain::ControllerSafety(const TickContext& ctx, const VehicleState&
         const auto& s = fb->sample;
 
         // Hard shutdown conditions
-        if (s.batVoltage < DriveConfig::Controller::VoltageOff) return Severity::Off;
-        if (s.boardTemp  >= DriveConfig::Controller::TempOff)   return Severity::Off;
+        if (s.batVoltage < ctx.params.Controller.VoltageOff) return Severity::Off;
+        if (s.boardTemp >= ctx.params.Controller.TempOff)    return Severity::Off;
 
         // Warning conditions
-        if (s.batVoltage < DriveConfig::Controller::VoltageWarn) return Severity::Warn;
-        if (s.boardTemp  >= DriveConfig::Controller::TempWarn)   return Severity::Warn;
+        if (s.batVoltage < ctx.params.Controller.VoltageWarn) return Severity::Warn;
+        if (s.boardTemp  >= ctx.params.Controller.TempWarn)   return Severity::Warn;
 
         return Severity::Ok;
     };
@@ -233,7 +235,7 @@ uint8_t DriveTrain::ControllerSafety(const TickContext& ctx, const VehicleState&
 
     // 1) Idle-based shutdown (hard)
     const uint32_t timeUserIdle = ctx.nowMs - state.lastUserInput;
-    if (timeUserIdle > DriveConfig::MaxUserIdleBeforeShutdown) {
+    if (timeUserIdle > SWConfig::UserBehaviour::MaxUserIdleBeforeShutdownMs) {
         return Axle::RemoteCommand::CmdPowerOff;
     }
 
@@ -251,7 +253,7 @@ uint8_t DriveTrain::ControllerSafety(const TickContext& ctx, const VehicleState&
     uint8_t cmd = Axle::RemoteCommand::CmdNOP;
 
     // 3a) User-idle warning beep pattern (soft)
-    if (timeUserIdle > DriveConfig::MaxUserIdleWarn) {
+    if (timeUserIdle > SWConfig::UserBehaviour::MaxUserIdleWarnMs) {
         const uint32_t t = timeUserIdle / 100;
         if (t % 10 == 0) {
             cmd = Axle::RemoteCommand::CmdBeep;
@@ -330,7 +332,7 @@ void DriveTrain::ComputeLights(const TickContext& ctx, TickDecision& dec, Vehicl
     }
 
     dec.failSafe   = false;
-    state.brakeLight = (ctx.user.throttle <= -DriveConfig::Brakes::DetectThreshold);
+    state.brakeLight = (ctx.user.throttle <= -SWConfig::InputFiltering::DeadBand);
     state.tailLight = (state.currGear != Gear::N);
     state.loBeam = (state.currGear == Gear::D);
     state.reverseLight = (state.currGear == Gear::R);
@@ -412,10 +414,10 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, VehicleS
     
     // limit to the max speed by fading out near max speed
     float allowedMaxSpeed = (state.currGear == Gear::D) ? state.maxSpeedForward : state.maxSpeedReverse;
-    float start = allowedMaxSpeed - DriveConfig::SpeedLimiterFadeBand;
+    float start = allowedMaxSpeed - ctx.params.SpeedLimiterFadeBand;
 
     // scale in [0..1]
-    float spdFade = (vehicleSpeed - start) / DriveConfig::SpeedLimiterFadeBand;
+    float spdFade = (vehicleSpeed - start) / ctx.params.SpeedLimiterFadeBand;
     if (spdFade < 0.f) spdFade = 0.f;
     if (spdFade > 1.f) spdFade = 1.f;
 
@@ -423,7 +425,7 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, VehicleS
                ? (throttleInput * (1.f - spdFade))
                : throttleInput;
     // Anti-reversing fade: scale braking torque to zero as |speed| -> 0
-    const float vFadeDen = static_cast<float>(DriveConfig::Brakes::AntiReversingSpeed);
+    const float vFadeDen = ctx.params.Brakes.AntiReversingSpeed;
 
     auto brakeScale = [&](std::optional<int16_t> sp) -> float {
         if (!sp || vFadeDen <= 1.0f) return 1.0f; // if speed missing: keep braking
@@ -494,14 +496,14 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, VehicleS
     const float Tc_total = Tc_front_raw + Tc_rear_raw;
 
     const float thrAbs = (throttle >= 0.f) ? throttle : -throttle;
-    float a = thrAbs / (DriveConfig::TV::BiasHighThrottle * maxT);
+    float a = thrAbs / (ctx.params.TV.BiasHighThrottle * maxT);
     a = clampF(a, 0.f, 1.f);
 
     float frontShare = 0.5f;
     if (throttle >= 0.f) {
-        frontShare = lerp(DriveConfig::TV::DriveFrontShareLow, DriveConfig::TV::DriveFrontShareHigh, a);
+        frontShare = lerp(ctx.params.TV.DriveFrontShareLow, ctx.params.TV.DriveFrontShareHigh, a);
     } else {
-        frontShare = lerp(DriveConfig::TV::BrakeFrontShareLow, DriveConfig::TV::BrakeFrontShareHigh, a);
+        frontShare = lerp(ctx.params.TV.BrakeFrontShareLow, ctx.params.TV.BrakeFrontShareHigh, a);
     }
 
     // Safety clamp (optional but good): never starve an axle completely
@@ -519,13 +521,13 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, VehicleS
     else if (sp_rr)     vRear = static_cast<float>(abs(*sp_rr));
     else                vRear = 0.f;
 
-    const float v0 = static_cast<float>(DriveConfig::TV::RearFadeSpeed0);
-    const float v1 = static_cast<float>(DriveConfig::TV::RearFadeSpeed1);
+    const float v0 = static_cast<float>(ctx.params.TV.RearFadeSpeed0);
+    const float v1 = static_cast<float>(ctx.params.TV.RearFadeSpeed1);
     float us = (v1 > v0) ? ((vRear - v0) / (v1 - v0)) : 1.f;
     us = clampF(us, 0.f, 1.f);
 
-    const float t0 = static_cast<float>(DriveConfig::TV::RearFadeThrottle0) * maxT;
-    const float t1 = static_cast<float>(DriveConfig::TV::RearFadeThrottle1) * maxT;
+    const float t0 = static_cast<float>(ctx.params.TV.RearFadeThrottle0) * maxT;
+    const float t1 = static_cast<float>(ctx.params.TV.RearFadeThrottle1) * maxT;
     float ut = (t1 > t0) ? ((thrAbs - t0) / (t1 - t0)) : 1.f;
     ut = clampF(ut, 0.f, 1.f);
 
@@ -534,7 +536,7 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, VehicleS
     float Td_rear = 0.f;
 
     if (absS > 0.001f) {
-        const float oppMag = absS * static_cast<float>(DriveConfig::TV::SteerTorqueRear);
+        const float oppMag = absS * static_cast<float>(ctx.params.TV.SteerTorqueRear);
 
         auto motionSign = [&](std::optional<int16_t> sp) -> float {
             return sp ? signOf(*sp) : gearSign;
@@ -552,7 +554,7 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, VehicleS
         Td_rear *= fadeRear;
 
         static float lastTdRear = 0.f;
-        const float maxTdRearDeltaPerTick = DriveConfig::TV::MaxTorquePerTick * maxT;
+        const float maxTdRearDeltaPerTick = ctx.params.TV.MaxTorquePerTick * maxT;
         Td_rear = rateLimit(Td_rear, lastTdRear, maxTdRearDeltaPerTick);
     }
 
@@ -569,14 +571,14 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, VehicleS
     else if (sp_fr)     vFront = static_cast<float>(abs(*sp_fr));
     else                vFront = 0.f;
 
-    float u = vFront / DriveConfig::TV::SteerTorqueHighSpeed;
+    float u = vFront / ctx.params.TV.SteerTorqueHighSpeed;
     u = clampF(u, 0.f, 1.f);
-    const float k = lerp(DriveConfig::TV::SteerTorqueLowFactor, DriveConfig::TV::SteerTorqueHighFactor, u);
+    const float k = lerp(ctx.params.TV.SteerTorqueLowFactor, ctx.params.TV.SteerTorqueHighFactor, u);
 
-    float Td_front = s * static_cast<float>(DriveConfig::TV::SteerTorqueFront) * k;
+    float Td_front = s * static_cast<float>(ctx.params.TV.SteerTorqueFront) * k;
 
     static float lastTdFront = 0.f;
-    const float maxTdDeltaPerTick = DriveConfig::TV::MaxTorquePerTick * maxT;
+    const float maxTdDeltaPerTick = ctx.params.TV.MaxTorquePerTick * maxT;
     Td_front = rateLimit(Td_front, lastTdFront, maxTdDeltaPerTick);
 
     const auto fp = allocate_pair(Tc_front, Td_front);
@@ -588,11 +590,12 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, VehicleS
     // =========================
     static float slipScale_fl = 1.f, slipScale_fr = 1.f, slipScale_rl = 1.f, slipScale_rr = 1.f;
 
-    auto recover = [&](float& sc) {
-        sc += DriveConfig::TV::SlipRecoverPerTick;
-        if (sc > 1.f) sc = 1.f;
+    auto recover = [&](float &sc)
+    {
+        sc += ctx.params.TV.SlipRecoverPerTick;
+        if (sc > 1.f)
+            sc = 1.f;
     };
-
 
     // Default: recover scales every tick (unless we detect slip on that wheel)
     recover(slipScale_fl);
@@ -616,13 +619,13 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, VehicleS
 
     auto applySlipLogic = [&](int idx, float wheelTorqueCmd, float& sc) {
         const float vRefLocal = vRefExcluding(idx);
-        if (vRefLocal < DriveConfig::TV::SlipSpeedEps) return; // too slow / too noisy -> do nothing
+        if (vRefLocal < ctx.params.TV.SlipSpeedEps) return; // too slow / too noisy -> do nothing
 
-        const float hi = vRefLocal * (1.f + DriveConfig::TV::SlipRatio);
-        const float lo = vRefLocal * (1.f - DriveConfig::TV::SlipRatio);
+        const float hi = vRefLocal * (1.f + ctx.params.TV.SlipRatio);
+        const float lo = vRefLocal * (1.f - ctx.params.TV.SlipRatio);
 
         bool slip = false;
-        const float te = DriveConfig::TV::SlipTorqueEps * maxT;
+        const float te = ctx.params.TV.SlipTorqueEps * maxT;
 
         if (wheelTorqueCmd > te) {
             // ASR: wheel spins faster than the other wheels under positive torque
@@ -633,8 +636,8 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, VehicleS
         }
 
         if (slip) {
-            sc *= DriveConfig::TV::SlipDownFactor;
-            if (sc < DriveConfig::TV::SlipMinScale) sc = DriveConfig::TV::SlipMinScale;
+            sc *= ctx.params.TV.SlipDownFactor;
+            if (sc < ctx.params.TV.SlipMinScale) sc = ctx.params.TV.SlipMinScale;
         }
     };
 
@@ -783,7 +786,7 @@ void DriveTrain::ProcessExtCmds(TickContext& ctx, VehicleState& state)
     if (state.externalControl)
     {
         // check for timeout
-        if (ctx.nowMs - lastExtSteerCmd > DriveConfig::ExternalTimeout) {
+        if (ctx.nowMs - lastExtSteerCmd > SWConfig::UserBehaviour::ExternalTimeoutMs) {
             state.externalControl = false;
             state.lastExtSteering =  state.lastExtThrottle = 0;
         } 
@@ -843,11 +846,13 @@ void DriveTrain::ControlTask()
     const TickType_t period       = pdMS_TO_TICKS(ControlPeriodMs);
     TickType_t       lastWakeTime = xTaskGetTickCount();
     VehicleState     state; // only thing carried between loop iterations
+    DriveParams params = DriveParams::Defaults();
 
     for (;;) {
         const uint32_t nowMs = millis();
 
         TickContext  ctx = BuildContext(nowMs);
+        ctx.params = params; // copy
         ProcessExtCmds(ctx, state);
         TickDecision dec = ComputeDecision(ctx, state);
         ApplyDecision(dec, state);
