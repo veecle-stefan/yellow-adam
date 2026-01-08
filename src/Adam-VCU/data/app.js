@@ -719,4 +719,12 @@ window.addEventListener("pointercancel", (e) => {
   stopManual();
 });
 
+
+// Poweroff (always visible)
+document.getElementById("btn_poweroff")?.addEventListener("click", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  wsSend({ type:"cmd", name:"poweroff" });
+});
+
 setupTransport();

@@ -184,9 +184,35 @@
       background: rgba(59,130,246,0.18);
       border-color: rgba(59,130,246,0.55);
     }
+
+    /* ---- Poweroff (always visible) ---- */
+    .poweroffBtn{
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      z-index: 9999;
+      width: 44px;
+      height: 44px;
+      border-radius: 14px;
+      display: grid;
+      place-items: center;
+      font-size: 22px;
+      line-height: 1;
+      font-weight: 1000;
+      background: rgba(0,0,0,0.35);
+      border: 1px solid rgba(255,255,255,0.12);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+      cursor: pointer;
+    }
+    .poweroffBtn:active{
+      transform: translateY(1px);
+    }
+
 </style>
 </head>
 <body>
+<button id="btn_poweroff" class="poweroffBtn" type="button" title="Power off">⏻</button>
+
 <div class="wrap">
 <div class="inputs">
 <div class="ibox">

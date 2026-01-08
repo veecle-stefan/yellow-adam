@@ -111,6 +111,11 @@ bool JSONInteraction::DispatchCommand(const String& msg, DriveTrain* drive)
       return true;
     }
 
+    if (name == "poweroff") {
+      drive->SendPowerOff();
+      return true;
+    }
+
   }
 
   // Unknown / unsupported

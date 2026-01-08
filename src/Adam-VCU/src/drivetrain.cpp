@@ -85,6 +85,13 @@ void DriveTrain::SendExternalControl(bool enable)
     SendCommand(&cmd);
 }
 
+void DriveTrain::SendPowerOff()
+{
+    CommandItem cmd;
+    cmd.cmd = DriveCommand::PowerOff;
+    SendCommand(&cmd);
+}
+
 void DriveTrain::SendHeadlight(uint8_t mode, bool on)
 {
     CommandItem cmd;
@@ -199,42 +206,71 @@ DriveTrain::TickContext DriveTrain::BuildContext(uint32_t nowMs)
 
 uint8_t DriveTrain::ControllerSafety(const TickContext& ctx, const VehicleState& state)
 {
+    enum class Severity : uint8_t { Ok=0, Warn=1, Off=2 };
+
+    auto sevMax = [](Severity a, Severity b) -> Severity { return (static_cast<uint8_t>(a) > static_cast<uint8_t>(b)) ? a : b; };
+
+    auto evalOne = [&](const std::optional<Axle::HistoryFrame>& fb) -> Severity {
+        if (!fb) return Severity::Ok; // treat missing feedback as "no data" (handled separately for beep)
+
+        const auto& s = fb->sample;
+
+        // Hard shutdown conditions
+        if (s.batVoltage < DriveConfig::Controller::VoltageOff) return Severity::Off;
+        if (s.boardTemp  >= DriveConfig::Controller::TempOff)   return Severity::Off;
+
+        // Warning conditions
+        if (s.batVoltage < DriveConfig::Controller::VoltageWarn) return Severity::Warn;
+        if (s.boardTemp  >= DriveConfig::Controller::TempWarn)   return Severity::Warn;
+
+        return Severity::Ok;
+    };
+
+    // 0) Highest priority: explicit poweroff request
+    if (state.reqPowerOff) {
+        return Axle::RemoteCommand::CmdPowerOff;
+    }
+
+    // 1) Idle-based shutdown (hard)
+    const uint32_t timeUserIdle = ctx.nowMs - state.lastUserInput;
+    if (timeUserIdle > DriveConfig::MaxUserIdleBeforeShutdown) {
+        return Axle::RemoteCommand::CmdPowerOff;
+    }
+
+    // 2) Evaluate each controller independently (even if one is missing)
+    Severity sev = Severity::Ok;
+    sev = sevMax(sev, evalOne(ctx.currFront));
+    sev = sevMax(sev, evalOne(ctx.currRear));
+
+    if (sev == Severity::Off) {
+        return Axle::RemoteCommand::CmdPowerOff;
+    }
+
+    // 3) Decide warning/beep behavior
+    //    We separate "warning severity" from "how to beep" so nothing can override poweroff.
     uint8_t cmd = Axle::RemoteCommand::CmdNOP;
 
-    // 1. Check for global timeout
-    uint32_t timeUserIdle = ctx.nowMs - state.lastUserInput;
-    if (timeUserIdle > DriveConfig::MaxUserIdleBeforeShutdown) {
-        cmd = Axle::RemoteCommand::CmdPowerOff;
-    }
+    // 3a) User-idle warning beep pattern (soft)
     if (timeUserIdle > DriveConfig::MaxUserIdleWarn) {
-        // make a tick tock noise
-        uint32_t timeUserIdleTens = timeUserIdle / 100;
-        if (timeUserIdleTens % 10 == 0) {
+        const uint32_t t = timeUserIdle / 100;
+        if (t % 10 == 0) {
             cmd = Axle::RemoteCommand::CmdBeep;
-        } else if (timeUserIdleTens % 10 == 5) {
+        } else if (t % 10 == 5) {
             cmd = Axle::RemoteCommand::CmdBeep + (uint8_t)10;
         }
     }
 
-    // 2. Check for motor controller emergency
-    if (ctx.currFront && ctx.currRear) {
-        const auto& f = ctx.currFront->sample;
-        const auto& r = ctx.currRear->sample;
+    // 3b) Controller warning beep (voltage/temp warn) — only if we haven't already chosen an idle pattern
+    if (sev == Severity::Warn && cmd == Axle::RemoteCommand::CmdNOP) {
+        cmd = Axle::RemoteCommand::CmdBeep;
+    }
 
-        if ((f.batVoltage < DriveConfig::Controller::VoltageOff) ||
-            (r.batVoltage < DriveConfig::Controller::VoltageOff)) {
-            cmd = Axle::RemoteCommand::CmdPowerOff;
-        } else if ((f.boardTemp >= DriveConfig::Controller::TempOff) ||
-                   (r.boardTemp >= DriveConfig::Controller::TempOff)) {
-            cmd = Axle::RemoteCommand::CmdPowerOff;
-        } else if ((f.batVoltage < DriveConfig::Controller::VoltageWarn) ||
-                   (r.batVoltage < DriveConfig::Controller::VoltageWarn) ||
-                   (f.boardTemp >= DriveConfig::Controller::TempWarn) ||
-                   (r.boardTemp >= DriveConfig::Controller::TempWarn)) {
-            cmd = Axle::RemoteCommand::CmdBeep;
-        }
-    } else {
-        // no feedback -> weird, at least beep!
+    // 3c) Missing feedback policy (optional):
+    // If one or both controllers have no feedback, you might want a beep, but DO NOT treat as shutdown.
+    const bool frontOk = ctx.currFront.has_value();
+    const bool rearOk  = ctx.currRear.has_value();
+    if ((!frontOk || !rearOk) && cmd == Axle::RemoteCommand::CmdNOP) {
+        // Keep this mild; otherwise you’ll beep constantly on startup.
         cmd = Axle::RemoteCommand::CmdBeep;
     }
 
@@ -786,6 +822,9 @@ void DriveTrain::ProcessExtCmds(TickContext& ctx, VehicleState& state)
                 lastExtSteerCmd = ctx.nowMs;
                 state.lastExtThrottle = extCmd.p1.i16;
                 state.lastExtSteering = extCmd.p2.i16;
+                break;
+            case DriveCommand::PowerOff:
+                state.reqPowerOff = true;
                 break;
         }
     }

@@ -53,11 +53,11 @@ namespace DriveConfig {
 
         // Rear axle yaw assist fade-in based on vehicle speed.
         // Below RearFadeSpeed0: rear yaw assist disabled (standstill / noise region).
-        static constexpr float RearFadeSpeed0 = 5.f;
+        static constexpr float RearFadeSpeed0 = 15.f;
 
         // Above RearFadeSpeed1: rear yaw assist fully enabled.
         // Between Speed0 and Speed1, effect ramps in linearly.
-        static constexpr float RearFadeSpeed1 = 25.f;
+        static constexpr float RearFadeSpeed1 = 30.f;
 
         // Rear axle yaw assist fade-in based on longitudinal driver intent (throttle or brake).
         // Expressed as fraction of MaxOutputLimit.
@@ -70,7 +70,7 @@ namespace DriveConfig {
 
         // Maximum differential steering torque applied on the front axle.
         // This is the primary steering actuator (torque steer).
-        static constexpr float SteerTorqueFront = 200.f;
+        static constexpr float SteerTorqueFront = 250.f;
 
         // Maximum yaw-assist differential torque applied on the rear axle.
         // This stabilizes / assists turning but is NOT a steering actuator.
@@ -152,6 +152,7 @@ struct VehicleState {
     uint16_t maxSpeedForward = 200;
     uint16_t maxSpeedReverse = 60;
     uint16_t maxPower = 300;
+    bool reqPowerOff = false;
 };
 
 struct DriveTrainStatus {
@@ -182,7 +183,8 @@ enum DriveCommand {
     SetPowerLimit,
     EnableExternalControl,
     SetHeadlight,
-    Steer
+    Steer,
+    PowerOff
 };
 
 union CommandParameter {
@@ -214,6 +216,7 @@ public:
     void SendPowerLimit(uint16_t maxThrottle, uint16_t maxSpeedFwd, uint16_t maxSpeedRev);
     void SendExternalControl(bool enable);
     void SendHeadlight(uint8_t mode, bool on);
+    void SendPowerOff();
     void SendSteer(int16_t throttle, int16_t steer);
 
 protected:
