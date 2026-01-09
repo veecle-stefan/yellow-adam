@@ -316,10 +316,10 @@ function recomputeAll() {
   const fr0 = wheelWorld(p0, +ax, -wy);
   const rl0 = wheelWorld(p0, -ax, +wy);
   const rr0 = wheelWorld(p0, -ax, -wy);
-  wheelPaths.fl.push({ ...fl0, tq: Number.isFinite(s0.tq_fl) ? s0.tq_fl : 0 });
-  wheelPaths.fr.push({ ...fr0, tq: Number.isFinite(s0.tq_fr) ? s0.tq_fr : 0 });
-  wheelPaths.rl.push({ ...rl0, tq: Number.isFinite(s0.tq_rl) ? s0.tq_rl : 0 });
-  wheelPaths.rr.push({ ...rr0, tq: Number.isFinite(s0.tq_rr) ? s0.tq_rr : 0 });
+  wheelPaths.fl.push({ ...fl0, tq: Number.isFinite(s0.tq_fl) ? s0.tq_fl : 0, rpm: 0 });
+  wheelPaths.fr.push({ ...fr0, tq: Number.isFinite(s0.tq_fr) ? s0.tq_fr : 0, rpm: 0 });
+  wheelPaths.rl.push({ ...rl0, tq: Number.isFinite(s0.tq_rl) ? s0.tq_rl : 0, rpm: 0 });
+  wheelPaths.rr.push({ ...rr0, tq: Number.isFinite(s0.tq_rr) ? s0.tq_rr : 0, rpm: 0 });
 
   // bounds should include wheels too (better zoom)
   for (const p of [fl0, fr0, rl0, rr0, { x_cm: p0.x_cm, y_cm: p0.y_cm }]) {
@@ -344,7 +344,7 @@ function recomputeAll() {
 
     // cumulative distance from center ds
     const prevDist = cumDistCm[i] || 0;
-    cumDistCm.push(prevDist + (Number.isFinite(stepped.ds) ? stepped.ds : 0));
+    cumDistCm.push(prevDist + (Number.isFinite(stepped.ds) ? Math.abs(stepped.ds) : 0));
 
     // wheel traces for this pose, using torque from cur sample
     const { track_cm: tcm, wheelbase_cm: wcm } = getConstants();
@@ -355,10 +355,10 @@ function recomputeAll() {
     const rl = wheelWorld(p, -ax2, +wy2);
     const rr = wheelWorld(p, -ax2, -wy2);
 
-    wheelPaths.fl.push({ ...fl, tq: Number.isFinite(cur.tq_fl) ? cur.tq_fl : 0 });
-    wheelPaths.fr.push({ ...fr, tq: Number.isFinite(cur.tq_fr) ? cur.tq_fr : 0 });
-    wheelPaths.rl.push({ ...rl, tq: Number.isFinite(cur.tq_rl) ? cur.tq_rl : 0 });
-    wheelPaths.rr.push({ ...rr, tq: Number.isFinite(cur.tq_rr) ? cur.tq_rr : 0 });
+    wheelPaths.fl.push({ ...fl, tq: Number.isFinite(cur.tq_fl) ? cur.tq_fl : 0, rpm: Number.isFinite(cur.rpm_fl) ? cur.rpm_fl : 0 });
+    wheelPaths.fr.push({ ...fr, tq: Number.isFinite(cur.tq_fr) ? cur.tq_fr : 0, rpm: Number.isFinite(cur.rpm_fr) ? cur.rpm_fr : 0  });
+    wheelPaths.rl.push({ ...rl, tq: Number.isFinite(cur.tq_rl) ? cur.tq_rl : 0, rpm: Number.isFinite(cur.rpm_rl) ? cur.rpm_rl : 0  });
+    wheelPaths.rr.push({ ...rr, tq: Number.isFinite(cur.tq_rr) ? cur.tq_rr : 0, rpm: Number.isFinite(cur.rpm_rr) ? cur.rpm_rr : 0  });
 
     for (const wp of [fl, fr, rl, rr]) updateBounds(wp.x_cm, wp.y_cm);
   }
@@ -548,7 +548,7 @@ function tqToLineWidthPx(tq) {
   const denom = Math.max(1e-6, Number.isFinite(maxAbsTq) ? maxAbsTq : 1000);
   const n = Math.min(1, a / denom);
   // tune these if you want thicker/thinner traces
-  return 1.0 + n * 7.0;
+  return Math.round(1.0 + n * 7.0);
 }
 
 function steerAngleRadFromS(sVal, gp) {
@@ -707,11 +707,36 @@ function drawWheelTraces(uptoIndex) {
       const b = arr[i + 1];
       const p1 = worldToScreen(a.x_cm, a.y_cm);
       const p2 = worldToScreen(b.x_cm, b.y_cm);
-      ctx.lineWidth = tqToLineWidthPx(a.tq);
+      const width = tqToLineWidthPx(a.tq);
+      ctx.lineWidth = width;
       ctx.beginPath();
+      if (a.tq < 0) {
+        ctx.setLineDash([width, width]);
+      } else {
+        ctx.setLineDash([]);
+      }
       ctx.moveTo(p1.x, p1.y);
       ctx.lineTo(p2.x, p2.y);
       ctx.stroke();
+
+      // draw circles whenever wheel speeds didn't match (slip ABS/ASR)
+      const otherSpeeds = [];
+      for (const otherWheel of wheels) {
+        if (otherWheel.key != w.key) {
+          // compare with other wheels
+          const otherAtSameIdx = wheelPaths[otherWheel.key][i];
+          otherSpeeds.push(otherAtSameIdx.rpm);
+        }
+      }
+      // here we definetly have 3 other speeds
+      otherSpeeds.sort();
+      const medianSpd = otherSpeeds[1];
+      if ((Math.abs(a.rpm) > Math.abs(medianSpd) * 1.2) || (Math.abs(a.rpm) < Math.abs(medianSpd) * 0.8)) {
+        // draw a circle
+        ctx.beginPath();
+        ctx.arc(p2.x, p2.y, width * 2, 0, 2 * Math.PI);
+        ctx.stroke();
+      }
     }
 
     ctx.restore();
