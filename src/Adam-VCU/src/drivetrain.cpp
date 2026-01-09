@@ -152,6 +152,8 @@ DriveTrain::UserCmd DriveTrain::ReadUserCmd(RCinput::UserInput ch1, RCinput::Use
         isTapping = false;
         tapCount = 0;
 
+        return u;
+
     } else {
         // signals valid -> plug them in
         u.throttle = *ch1;
@@ -693,8 +695,13 @@ DriveTrain::Torques DriveTrain::TorqueVectoring(const TickContext& ctx, VehicleS
 void DriveTrain::CheckGear(const TickContext& ctx, VehicleState& state)
 {
     if (!ctx.user.detected) {
-        // reset to neutral
-        state.currGear = Gear::N;
+        // reset to neutral after first standstill
+        int16_t speed = 0;
+        if (ctx.currFront) speed = max(ctx.currFront->sample.speedL_meas, ctx.currFront->sample.speedR_meas);
+        if (ctx.currRear) speed = max(speed, max(ctx.currRear->sample.speedL_meas, ctx.currRear->sample.speedR_meas));
+        if (speed == 0) {
+            state.currGear = Gear::N; // switch to N if standstill or no motor feedback from any controller
+        }
         return;
     }
     // check for double-tap on the brake while not moving

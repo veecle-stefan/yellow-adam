@@ -30,10 +30,10 @@ struct VehicleState {
     bool externalControl = false;
     uint32_t lastExtThrottle = 0;
     uint32_t lastExtSteering = 0;
-    uint16_t maxSpeedForward = 150;
+    uint16_t maxSpeedForward = 100;
     uint16_t maxSpeedReverse = 60;
-    uint16_t maxDrivePower = 300;
-    uint16_t maxBrakePower = 750;
+    uint16_t maxDrivePower = 250;
+    uint16_t maxBrakePower = 600;
     bool reqPowerOff = false;
 };
 

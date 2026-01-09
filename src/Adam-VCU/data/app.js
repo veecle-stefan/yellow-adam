@@ -217,18 +217,18 @@ const btnSendTune  = document.getElementById("btn_send_tune");
 // Last (and initial) values shown/sent per param id.
 // Initialized from the C++ TVParams defaults so the UI matches firmware at first load.
 const tuningLast = {
-  0:  0.3,   // MaxTorquePerTick
+  0:  0.5,   // MaxTorquePerTick
   1:  1.0,   // SteerTorqueLowFactor
-  2:  0.5,   // SteerTorqueHighFactor
-  3:  50.0,  // SteerTorqueHighSpeed
+  2:  0.7,   // SteerTorqueHighFactor
+  3:  30.0,  // SteerTorqueHighSpeed
 
   4:  15.0,  // RearFadeSpeed0
   5:  30.0,  // RearFadeSpeed1
   6:  0.05,  // RearFadeThrottle0
   7:  0.3,   // RearFadeThrottle1
 
-  8:  250.0, // SteerTorqueFront
-  9:  250.0, // SteerTorqueRear
+  8:  220.0, // SteerTorqueFront
+  9:  260.0, // SteerTorqueRear
 
   10: 0.20,  // SlipRatio
   11: 0.70,  // SlipDownFactor

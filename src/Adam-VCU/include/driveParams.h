@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <math.h>
 
 // DriveParams:
 // A single, explicit container for all drive algorithm parameters.
@@ -54,7 +55,7 @@ struct DriveParams
         // expressed as a fraction of MaxOutputLimit.
         // Limits how fast torque steer / yaw assist can ramp to avoid mechanical shocks.
         // Default: 0.3
-        float MaxTorquePerTick = 0.3f;
+        float MaxTorquePerTick = 0.5f;
 
         // Front axle steering torque gain at standstill / very low speed.
         // Used to overcome rack centering spring and static friction.
@@ -64,12 +65,12 @@ struct DriveParams
         // Front axle steering torque gain at higher vehicle speeds.
         // Reduced on purpose to avoid twitchy steering and oscillations.
         // Default: 0.5
-        float SteerTorqueHighFactor = 0.5f;
+        float SteerTorqueHighFactor = 0.7f;
 
         // Speed at which SteerTorqueHighFactor is fully reached.
         // Below this, steering gain interpolates linearly between Low and High factors.
         // Default: 50.0
-        float SteerTorqueHighSpeed = 50.f;
+        float SteerTorqueHighSpeed = 30.f;
 
         // Rear axle yaw assist fade-in based on vehicle speed.
         // Below RearFadeSpeed0: rear yaw assist disabled (standstill / noise region).
@@ -95,12 +96,12 @@ struct DriveParams
         // Maximum differential steering torque applied on the front axle.
         // Primary steering actuator (torque steer) for your rack.
         // Default: 250.0
-        float SteerTorqueFront = 250.f;
+        float SteerTorqueFront = 220.f;
 
         // Maximum yaw-assist differential torque applied on the rear axle.
         // Stabilizes / assists turning but is NOT a steering actuator.
         // Default: 200.0
-        float SteerTorqueRear = 250.f;
+        float SteerTorqueRear = 260.f;
 
         // -------------------------------------------------------------------------
         // ABS / ASR – very simple reactive slip control (per-wheel scaling)
