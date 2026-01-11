@@ -17,7 +17,7 @@ Lights::Lights()
         this,
         SWConfig::Tasks::PrioMed,
         NULL,
-        SWConfig::CoreAffinity::CoreComms
+        SWConfig::CoreAffinity::CoreApp
     );
 }
 
