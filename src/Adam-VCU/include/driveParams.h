@@ -9,21 +9,6 @@
 struct DriveParams
 {
 
-    // Speed limiter fade band (soft region to avoid harsh clamp).
-    // Default: 30.0
-    float SpeedLimiterFadeBand = 30.f;
-
-    // -----------------------------------------------------------------------------
-    // Brakes / tap logic
-    // -----------------------------------------------------------------------------
-    struct BrakesParams
-    {
-        // "Anti-reversing" speed threshold (feedback speed units).
-        // Used to fade braking torque to zero as |speed| approaches 0 to avoid reversing.
-        // Default: 100 (speed units from feedback)
-        float AntiReversingSpeed = 100.f;
-    } Brakes;
-
     // -----------------------------------------------------------------------------
     // Safety thresholds (scaled!)
     // -----------------------------------------------------------------------------
@@ -155,6 +140,19 @@ struct DriveParams
         // a = clamp(|throttle| / (BiasHighThrottle * MaxOutputLimit), 0..1)
         // Default: 0.6
         float BiasHighThrottle = 0.6f;
+
+        // Speed limiter fade band (soft region to avoid harsh clamp).
+        // Default: 30.0
+        float SpeedLimiterFadeBand = 30.f;
+        // "Anti-reversing" speed threshold (feedback speed units).
+        // Used to fade braking torque to zero as |speed| approaches 0 to avoid reversing.
+        // Default: 100 (speed units from feedback)
+        float AntiReversingSpeed = 100.f;
+
+        float maxSpeedFwd = 100.f;
+        float maxSpeedRev = 60.f;
+        float maxPowerDrive = 250.f;
+        float maxPowerBrake = 600.f;
 
     } TV;
 

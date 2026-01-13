@@ -82,9 +82,9 @@ bool JSONInteraction::DispatchCommand(const String& msg, DriveTrain* drive)
       if (q < 0 || q <= p) return false;
 
       char g = msg.charAt(p);
-      if (g == 'D') drive->SendGear(Gear::D);
-      else if (g == 'R') drive->SendGear(Gear::R);
-      else drive->SendGear(Gear::N);
+      if (g == 'D') drive->SendGear(TorqueVectoring::Gear::D);
+      else if (g == 'R') drive->SendGear(TorqueVectoring::Gear::R);
+      else drive->SendGear(TorqueVectoring::Gear::N);
       return true;
     }
 

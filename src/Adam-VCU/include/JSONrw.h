@@ -5,6 +5,7 @@
 
 class JSONInteraction
 {
+    using DriveTrainStatus = DriveTrain::DriveTrainStatus;
     
 
     public:

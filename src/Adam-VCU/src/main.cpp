@@ -109,7 +109,7 @@ void loop() {
   if (currTime - last > 100) {
     last = currTime;
 
-    DriveTrainStatus st;
+    DriveTrain::DriveTrainStatus st;
     if (drive->GetLatestStatus(st)) {
       size_t n = json.EncodeStatusJson(st);
       if (n > 0) {

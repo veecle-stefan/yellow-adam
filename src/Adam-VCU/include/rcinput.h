@@ -5,7 +5,7 @@
 
 class RCinput {
 public:
-  typedef std::optional<int16_t> UserInput;
+  using UserInput = std::optional<int16_t>;
 
   // Map 1000–2000 µs to -1000 to 1000
   static constexpr int16_t MIN_US = 1000;

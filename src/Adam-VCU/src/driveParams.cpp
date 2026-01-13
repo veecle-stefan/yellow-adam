@@ -1,5 +1,5 @@
 // driveParams.cpp
-#include "driveParams.h"
+#include "driveparams.h"
 
 #include <cstdint>
 #include <cstddef>
@@ -57,6 +57,14 @@ namespace
         {"BrakeFrontShareLow", &DriveParams::TVParams::BrakeFrontShareLow, 0.0f, 1.0f},
         {"BrakeFrontShareHigh", &DriveParams::TVParams::BrakeFrontShareHigh, 0.0f, 1.0f},
         {"BiasHighThrottle", &DriveParams::TVParams::BiasHighThrottle, 0.0f, 5.0f},
+
+        // ----- Profiles
+        {"SpeedLimiterFadeBand", &DriveParams::TVParams::SpeedLimiterFadeBand, 10.0f, 100.0f},
+        {"AntiReversingSpeed", &DriveParams::TVParams::AntiReversingSpeed, 1.0f, 200.0f},
+        {"maxSpeedFwd", &DriveParams::TVParams::maxSpeedFwd, 50.0f, 1000.0f},
+        {"maxSpeedRev", &DriveParams::TVParams::maxSpeedRev, 50.0f, 1000.0f},
+        {"maxPowerDrive", &DriveParams::TVParams::maxPowerDrive, 50.0f, 1000.0f},
+        {"maxPowerBrake", &DriveParams::TVParams::maxPowerBrake, 50.0f, 1000.0f},
     };
 
     static constexpr uint16_t kTVParamCount =
