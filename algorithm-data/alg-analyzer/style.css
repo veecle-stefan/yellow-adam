@@ -1,0 +1,373 @@
+:root {
+    --bg: #0b0f14;
+    --text: #e8eef7;
+    --muted: #9db0c6;
+    --line: #223245;
+    --card: rgba(255, 255, 255, 0.03);
+    --card2: rgba(0, 0, 0, 0.14);
+    --accent: #60a5fa;
+    --good: #4ade80;
+    --bad: #fb7185;
+    --warn: #fbbf24;
+}
+
+* {
+    box-sizing: border-box;
+}
+body {
+    margin: 0;
+    color: var(--text);
+    font-family:
+        ui-sans-serif,
+        system-ui,
+        -apple-system,
+        Segoe UI,
+        Roboto,
+        Helvetica,
+        Arial;
+    background:
+        radial-gradient(
+            1200px 800px at 30% -10%,
+            rgba(96, 165, 250, 0.25),
+            transparent 55%
+        ),
+        radial-gradient(
+            900px 700px at 90% 0%,
+            rgba(74, 222, 128, 0.1),
+            transparent 50%
+        ),
+        var(--bg);
+}
+
+.wrap {
+    max-width: none;
+    margin: 0 auto;
+    padding: 18px;
+}
+header.wrap {
+    padding-bottom: 0;
+}
+
+h1 {
+    margin: 0 0 6px;
+    font-size: 18px;
+    font-weight: 800;
+}
+.sub {
+    margin: 0;
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: 460px 1fr;
+    gap: 14px;
+    padding-top: 14px;
+}
+@media (max-width: 1100px) {
+    .grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.card {
+    background: linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.03),
+        rgba(255, 255, 255, 0.015)
+    );
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+}
+
+.hd {
+    padding: 12px;
+    background: rgba(0, 0, 0, 0.15);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    font-weight: 800;
+    font-size: 13px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+}
+.bd {
+    padding: 12px;
+}
+
+.stack {
+    display: grid;
+    gap: 10px;
+}
+.row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+
+label {
+    display: block;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 6px;
+}
+
+select,
+input[type="file"],
+input[type="number"],
+button {
+    width: 100%;
+    background: rgba(8, 12, 18, 0.85);
+    color: var(--text);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    padding: 10px;
+    font-size: 13px;
+    outline: none;
+}
+
+button {
+    cursor: pointer;
+    font-weight: 850;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: linear-gradient(
+        180deg,
+        rgba(96, 165, 250, 0.26),
+        rgba(96, 165, 250, 0.12)
+    );
+}
+button.secondary {
+    background: rgba(255, 255, 255, 0.06);
+}
+button:hover {
+    filter: brightness(1.06);
+}
+button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.dropzone {
+    border: 1px dashed rgba(255, 255, 255, 0.18);
+    border-radius: 12px;
+    padding: 12px;
+    background: var(--card2);
+    color: var(--muted);
+    font-size: 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+}
+
+.pill {
+    font-size: 12px;
+    color: var(--muted);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.15);
+}
+
+.tiny {
+    font-size: 11px;
+}
+.muted {
+    color: var(--muted);
+}
+.err {
+    color: var(--bad);
+    font-size: 12px;
+    white-space: pre-wrap;
+}
+
+canvas {
+    width: 100%;
+    height: min(65vh, 620px);
+    display: block;
+    background: rgba(0, 0, 0, 0.18);
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.metrics {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+}
+@media (max-width: 1100px) {
+    .metrics {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+.metric {
+    padding: 10px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: rgba(0, 0, 0, 0.16);
+}
+.metric .k {
+    font-size: 11px;
+    color: var(--muted);
+}
+.metric .v {
+    margin-top: 2px;
+    font-weight: 900;
+}
+
+.legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    color: var(--muted);
+    font-size: 12px;
+}
+.sw {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    display: inline-block;
+    margin-right: 6px;
+}
+.sw1 {
+    background: #60a5fa;
+} /* recorded */
+.sw2 {
+    background: #a78bfa;
+} /* simulated */
+.sw3 {
+    background: #fbbf24;
+} /* overlay */
+
+.checks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+/* Checkbox legend colors (match app.js color map) */
+.chk {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 12px;
+    user-select: none;
+}
+.chk input {
+    width: auto;
+}
+
+/* small colored square like a legend key */
+.chk .swatch {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    display: inline-block;
+    background: rgba(255, 255, 255, 0.25);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1) inset;
+}
+
+/* per-wheel colors */
+.chk.fl .swatch {
+    background: #60a5fa;
+}
+.chk.fr .swatch {
+    background: #a78bfa;
+}
+.chk.rl .swatch {
+    background: #34d399;
+}
+.chk.rr .swatch {
+    background: #fb7185;
+}
+
+/* optional: match the checkbox tick color too */
+.chk.fl input {
+    accent-color: #60a5fa;
+}
+.chk.fr input {
+    accent-color: #a78bfa;
+}
+.chk.rl input {
+    accent-color: #34d399;
+}
+.chk.rr input {
+    accent-color: #fb7185;
+}
+
+.chk input {
+    width: auto;
+    accent-color: var(--accent);
+}
+
+/* make canvas height responsive */
+canvas {
+    height: min(50vh, 620px);
+}
+
+/* Two-column editor area under the chart */
+.editgrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+
+@media (max-width: 1100px) {
+    .editgrid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Two-column editor area under the chart */
+.editgrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+
+    /* IMPORTANT: top-align both columns so params doesn't "sink" */
+    align-items: start;
+}
+
+@media (max-width: 1100px) {
+    .editgrid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Editors */
+textarea#algoEditor,
+textarea#paramsEditor {
+    width: 100%;
+    resize: vertical;
+    background: rgba(8, 12, 18, 0.85);
+    color: var(--text);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    padding: 10px;
+    font-size: 12px;
+    line-height: 1.35;
+    font-family:
+        ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+        "Liberation Mono", monospace;
+    white-space: pre;
+    overflow: auto;
+
+    /* prevents weird baseline stretching in grid items */
+    align-self: stretch;
+}
+
+/* Make them visually balanced by default */
+textarea#paramsEditor {
+    color: #99ff99;
+    min-height: 250px;
+}
+
+textarea#algoEditor {
+    color: #9999ff;
+    min-height: 250px;
+}

@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Torque Vectoring Log Replay</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="wrap">
+    <h1>Torque Vectoring Log Replay — Recorded vs Simulated</h1>
+    <p class="sub">
+      Load a CSV, run <code>TorqueVectoring(currGear, t, s, lastFront, lastRear)</code> from <code>algorithm.js</code>,
+      compare against recorded <code>tq_*</code>, and visualize the differences.
+    </p>
+  </header>
+
+  <main class="wrap grid">
+    <section class="card">
+      <div class="hd">
+        <span>Load CSV</span>
+        <span id="fileBadge" class="pill">No file</span>
+      </div>
+      <div class="bd stack">
+        <div id="dropzone" class="dropzone">
+          <div>
+            <div><b>Drag & drop</b> CSV here</div>
+            <div class="tiny">or use the file picker.</div>
+          </div>
+          <div class="pill">Drop</div>
+        </div>
+
+        <div>
+          <label for="file">CSV file</label>
+          <input id="file" type="file" accept=".csv,text/csv" />
+        </div>
+
+        <div class="row">
+          <div>
+            <label>Rows loaded</label>
+            <div id="rowsLoaded" class="pill">0</div>
+          </div>
+          <div>
+            <label>Time span</label>
+            <div id="timeSpan" class="pill">—</div>
+          </div>
+        </div>
+
+        <div class="row">
+          <button id="btnReplay" disabled>Replay & Compare</button>
+          <button id="btnReset" class="secondary" disabled>Reset</button>
+        </div>
+
+        <div id="loadErr" class="err"></div>
+        
+        
+      </div>
+
+      <div class="hd">
+        <span>Plot torques</span>
+        <span id="plotBadge" class="pill">FL+FR+RL+RR</span>
+      </div>
+      <div class="bd stack">
+        <div class="stack">
+          <div class="tiny muted"><b>Select wheels</b> (recorded solid, simulated dashed)</div>
+
+          <div class="checks">
+            <label class="chk fl"><input type="checkbox" id="cb_fl" checked> FL</label>
+            <label class="chk fr"><input type="checkbox" id="cb_fr" checked> FR</label>
+            <label class="chk rl"><input type="checkbox" id="cb_rl" checked> RL</label>
+            <label class="chk rr"><input type="checkbox" id="cb_rr" checked> RR</label>
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
+            <label for="plotOverlay">Overlay (same scale)</label>
+            <select id="plotOverlay">
+              <option value="">None</option>
+              <option value="t" selected>t (throttle)</option>
+              <option value="s">s (steering)</option>
+              <option value="rpm_fl">rpm_fl</option>
+              <option value="rpm_fr">rpm_fr</option>
+              <option value="rpm_rl">rpm_rl</option>
+              <option value="rpm_rr">rpm_rr</option>
+              <option value="cu_fl">cu_fl</option>
+              <option value="cu_fr">cu_fr</option>
+              <option value="cu_rl">cu_rl</option>
+              <option value="cu_rr">cu_rr</option>
+            </select>
+          </div>
+
+          <div class="stack">
+            <label>&nbsp;</label>
+            <label class="chk tiny muted" style="justify-content:flex-start;gap:10px;">
+              <input type="checkbox" id="cb_overlay" checked>
+              Show overlay
+            </label>
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
+            <label for="stride">Downsample stride (draw every Nth row)</label>
+            <input id="stride" type="number" min="1" step="1" value="1" />
+          </div>
+          <div>
+            <label for="timeWindow">Time window (ms, 0 = full)</label>
+            <input id="timeWindow" type="number" min="0" step="100" value="0" />
+          </div>
+        </div>
+
+        <div class="tiny muted">
+          Overlay is scaled into the current Y-range so it’s visible (yellow line).
+        </div>
+      </div>
+
+        <div class="tiny muted">
+          Notes: “Simulated” exists only for <code>tq_*</code>. If primary is e.g. <code>rpm_fl</code>, you’ll see recorded only.
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="hd">
+        <span>Recorded vs Simulated</span>
+        
+      </div>
+
+      <canvas id="chart"></canvas>
+
+      <div class="bd stack">
+        <div class="metrics">
+          <div class="metric">
+            <div class="k">FL tq error (RMSE / MAE / max)</div>
+            <div class="v" id="m_fl">—</div>
+          </div>
+          <div class="metric">
+            <div class="k">FR tq error (RMSE / MAE / max)</div>
+            <div class="v" id="m_fr">—</div>
+          </div>
+          <div class="metric">
+            <div class="k">RL tq error (RMSE / MAE / max)</div>
+            <div class="v" id="m_rl">—</div>
+          </div>
+          <div class="metric">
+            <div class="k">RR tq error (RMSE / MAE / max)</div>
+            <div class="v" id="m_rr">—</div>
+          </div>
+        </div>
+
+        <div id="runInfo" class="tiny muted">Load a file, then click “Replay & Compare”.</div>
+        <div id="runErr" class="err"></div>
+        <div class="hd">
+          <span>Live Algorithm</span>
+          <span class="pill" id="liveBadge">Using algorithm.js</span>
+        </div>
+        
+        <div class="bd stack">
+          <div class="row">
+            <button id="btnApplyAlgo" class="secondary" disabled>Apply</button>
+            <label class="chk tiny muted" style="justify-content:flex-start;gap:10px;">
+              <input type="checkbox" id="cbAutoApply">
+              Auto-apply (debounced)
+            </label>
+          </div>
+        
+          <div class="editgrid">
+            <div class="stack">
+              <label class="tiny muted"><b>params</b></label>
+              <textarea id="paramsEditor" spellcheck="false"></textarea>
+            </div>
+        
+            <div class="stack">
+              <label class="tiny muted"><b>TorqueVectoring body</b></label>
+              <textarea id="algoEditor" spellcheck="false"></textarea>
+            </div>
+          </div>
+        
+          <div class="tiny muted">
+            Params are available as <code>params</code>. Algorithm must <code>return {fl,fr,rl,rr}</code>.
+          </div>
+        
+          <div id="algoErr" class="err"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Load algorithm first so TorqueVectoring() exists -->
+  <script src="algorithm.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
