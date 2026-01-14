@@ -215,6 +215,26 @@ function resetMetrics() {
       "—";
 }
 
+function lerpInt(a, b, u) {
+  return Math.round(lerp(a, b, u)) | 0;
+}
+
+function lerpLastRPM(prev, curr, u) {
+  return {
+    receivedTorqueL: lerpInt(
+      prev.lastFront.receivedTorqueL,
+      curr.lastFront.receivedTorqueL,
+      u,
+    ),
+    receivedTorqueR: lerpInt(
+      prev.lastFront.receivedTorqueR,
+      curr.lastFront.receivedTorqueR,
+      u,
+    ),
+    rpmL: lerpInt(prev.lastFront.rpmL, curr.lastFront.rpmL, u),
+    rpmR: lerpInt(prev.lastFront.rpmR, curr.lastFront.rpmR, u),
+  };
+}
 // ---- Replay ----
 function runReplay() {
   runErr.textContent = "";
@@ -246,6 +266,14 @@ function runReplay() {
   };
 
   const tStart = performance.now();
+  const timeScaling =
+    typeof window.timeScaling === "number" &&
+    Number.isFinite(window.timeScaling)
+      ? Math.max(1, Math.floor(window.timeScaling))
+      : 1;
+
+  let lastInput = null;
+
   for (let i = 0; i < n; i++) {
     const r = rows[i];
 
@@ -258,39 +286,65 @@ function runReplay() {
     sim.rec.tq_rl[i] = safeInt(r.tq_rl);
     sim.rec.tq_rr[i] = safeInt(r.tq_rr);
 
-    // inputs
-    const currGear = mapCsvGearToEnum(safeInt(r.gear));
-    const t = safeInt(r.t);
-    const s = safeInt(r.s);
+    let out = { fl: 0, fr: 0, rl: 0, rr: 0 };
 
-    // IMPORTANT: lastFront/lastRear come from SAME row / timestamp
-    const lastFront = {
-      receivedTorqueL: safeInt(r.tq_fl),
-      receivedTorqueR: safeInt(r.tq_fr),
-      rpmL: safeInt(r.rpm_fl),
-      rpmR: safeInt(r.rpm_fr),
-    };
-    const lastRear = {
-      receivedTorqueL: safeInt(r.tq_rl),
-      receivedTorqueR: safeInt(r.tq_rr),
-      rpmL: safeInt(r.rpm_rl),
-      rpmR: safeInt(r.rpm_rr),
-    };
-
-    let out;
     try {
-      out = activeTV(currGear, t, s, lastFront, lastRear) || {
-        fl: 0,
-        fr: 0,
-        rl: 0,
-        rr: 0,
+      const currInput = {
+        gear: mapCsvGearToEnum(safeInt(r.gear)),
+        t: safeInt(r.t),
+        s: safeInt(r.s),
+        lastFront: {
+          receivedTorqueL: safeInt(r.tq_fl),
+          receivedTorqueR: safeInt(r.tq_fr),
+          rpmL: safeInt(r.rpm_fl),
+          rpmR: safeInt(r.rpm_fr),
+        },
+        lastRear: {
+          receivedTorqueL: safeInt(r.tq_rl),
+          receivedTorqueR: safeInt(r.tq_rr),
+          rpmL: safeInt(r.rpm_rl),
+          rpmR: safeInt(r.rpm_rr),
+        },
       };
+      // Run internal ticks at 20ms resolution within this 100ms sample interval.
+      // u goes 0..1 across the ticks (includes endpoints).
+
+      if (lastInput === null || timeScaling <= 1) {
+        // first iteration runs only once, all others go into the loop
+        out =
+          activeTV(
+            currInput.gear,
+            currInput.t,
+            currInput.s,
+            currInput.lastFront,
+            currInput.lastRear,
+          ) || out;
+      } else {
+        for (let k = 1; k <= timeScaling; k++) {
+          const u = k / timeScaling; // 0.2..1.0 for 5 ticks
+          const t = lerpInt(lastInput.t, currInput.t, u);
+          const s = lerpInt(lastInput.s, currInput.s, u);
+          const lastFront = lerpLastRPM(
+            lastInput.lastFront,
+            currInput.lastFront,
+            u,
+          );
+          const lastRear = lerpLastRPM(
+            lastInput.lastFront,
+            currInput.lastFront,
+            u,
+          );
+
+          out = activeTV(currInput.gear, t, s, lastFront, lastRear) || out;
+        }
+        lastInput = currInput;
+      }
     } catch (e) {
       runErr.textContent = `Algorithm error at row ${i + 1}: ${String(e?.message || e)}`;
       break;
     }
 
-    // clamp to your range
+    // clamp to your range (store only the LAST tick result)
     sim.sim.tq_fl[i] = Math.max(-1000, Math.min(1000, safeInt(out.fl)));
     sim.sim.tq_fr[i] = Math.max(-1000, Math.min(1000, safeInt(out.fr)));
     sim.sim.tq_rl[i] = Math.max(-1000, Math.min(1000, safeInt(out.rl)));
@@ -368,6 +422,7 @@ function draw() {
   const windowStartTs = timeWindow > 0 ? tsEnd - timeWindow : tsStart;
 
   const xs = [];
+  const gears = [];
   const series = {
     fl_rec: [],
     fl_sim: [],
@@ -385,6 +440,10 @@ function draw() {
     const ts = sim.ts[i];
     if (ts < windowStartTs) continue;
     xs.push(ts);
+
+    // gear for this plotted sample
+    const g = mapCsvGearToEnum(safeInt(dataset.rows[i].gear));
+    gears.push(g);
 
     series.fl_rec.push(sim.rec.tq_fl[i]);
     series.fl_sim.push(sim.sim.tq_fl[i]);
@@ -422,28 +481,6 @@ function draw() {
   // For other signals (rpm/cu/etc), keep the old "fit into axis" behavior so it stays visible.
   let ovPlot = series.ov;
 
-  if (overlayOn) {
-    const sameUnit =
-      overlayName === "t" ||
-      overlayName === "s" ||
-      overlayName === "tq_fl" ||
-      overlayName === "tq_fr" ||
-      overlayName === "tq_rl" ||
-      overlayName === "tq_rr";
-
-    if (!sameUnit) {
-      // Fit overlay into torque axis (shape-only)
-      const ovFinite = series.ov.filter(Number.isFinite);
-      const { min: ovMin, max: ovMax } = minMax(ovFinite);
-      const denom = ovMax - ovMin || 1;
-
-      ovPlot = series.ov.map((v) => {
-        if (!Number.isFinite(v)) return NaN;
-        const u = (v - ovMin) / denom; // 0..1
-        return minY + u * (maxY - minY);
-      });
-    }
-  }
   // Layout
 
   const pad = { l: 70, r: 18, t: 22, b: 36 };
@@ -496,6 +533,31 @@ function draw() {
 
   const xMap = (x) => pad.l + ((x - minX) / (maxX - minX || 1)) * pw;
   const yMap = (y) => pad.t + ph - ((y - minY) / (maxY - minY || 1)) * ph;
+
+  // --- Background bands for Reverse gear (Gear.R == 2) ---
+  ctx.save();
+  ctx.fillStyle = "rgba(255, 80, 80, 0.08)"; // subtle red
+
+  let segStart = null;
+  for (let j = 0; j < xs.length; j++) {
+    const isR = gears[j] === Gear.R;
+
+    if (isR && segStart === null) segStart = j;
+    if ((!isR || j === xs.length - 1) && segStart !== null) {
+      // end segment at j (exclusive), or include last point
+      const endIdx = isR && j === xs.length - 1 ? j : j - 1;
+
+      const x0 = xMap(xs[segStart]);
+      const x1 = xMap(xs[endIdx]);
+
+      // Make sure very short segments still visible
+      const w = Math.max(1, x1 - x0);
+
+      ctx.fillRect(x0, pad.t, w, ph);
+      segStart = null;
+    }
+  }
+  ctx.restore();
 
   // ---- zero line (y = 0) ----
   if (minY < 0 && maxY > 0) {

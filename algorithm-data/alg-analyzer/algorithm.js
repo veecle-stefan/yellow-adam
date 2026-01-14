@@ -16,7 +16,7 @@ const lerp = (a, b, u) => a + (b - a) * u;
 const absf = (x) => (x >= 0 ? x : -x);
 const signOf = (v) => (v > 0 ? 1 : v < 0 ? -1 : 0);
 
-const timeScaling = 5;
+window.timeScaling = 5;
 
 const params = {
   TV: {
@@ -33,7 +33,7 @@ const params = {
     SlipRatio: 0.2,
     SlipDownFactor: 0.5,
     SlipMinScale: 0.25,
-    SlipRecoverPerTick: 0.2 * timeScaling,
+    SlipRecoverPerTick: 0.2,
     SlipSpeedEps: 20.0,
     SlipTorqueEps: 0.1,
     DriveFrontShareLow: 0.55,
