@@ -46,35 +46,6 @@ let activeTV = null; // the function we actually call
 let lastGoodSource = ""; // last compiled editor text
 let autoApplyTimer = 0;
 
-const EDITOR_TEMPLATE = `// Function body only. Return {fl,fr,rl,rr}.
-//
-// Signature:
-//   TorqueVectoring(currGear, t, s, lastFront, lastRear)
-// currGear: 0=N,1=D,2=R
-// lastFront/lastRear: { receivedTorqueL, receivedTorqueR, rpmL, rpmR }
-//
-// Helpers: clamp(x,lo,hi), Torques(fl,fr,rl,rr), Gear
-
-if (currGear === Gear.N) return Torques(0,0,0,0);
-
-// Example baseline: split throttle equally, small steer bias
-let base = clamp(t, -1000, 1000);
-let bias = (clamp(s, -1000, 1000) / 1000) * 200;
-
-let left  = base + bias;
-let right = base - bias;
-
-// Reverse gear flips sign (adjust if your vehicle differs)
-if (currGear === Gear.R) { left = -left; right = -right; }
-
-return Torques(
-  clamp(Math.round(left/2),  -1000, 1000),
-  clamp(Math.round(right/2), -1000, 1000),
-  clamp(Math.round(left/2),  -1000, 1000),
-  clamp(Math.round(right/2), -1000, 1000),
-);
-`;
-
 // ---- State ----
 let dataset = null; // {header, rows}
 let sim = null; // computed arrays
@@ -572,12 +543,33 @@ function resizeCanvasToDisplaySize() {
   return { cssW, cssH, dpr };
 }
 
-function initAlgorithm() {
-  algoEditor.value = EDITOR_TEMPLATE;
-  btnApplyAlgo.disabled = false;
+function extractBodyFromFunctionSource(fnSrc) {
+  // fnSrc is "function TorqueVectoring(...) { ... }"
+  const start = fnSrc.indexOf("{");
+  const end = fnSrc.lastIndexOf("}");
+  if (start < 0 || end <= start) return "";
+  return fnSrc.slice(start + 1, end).trim() + "\n";
+}
 
-  // auto-apply once so replay can run immediately
-  applyEditorAlgorithm();
+function initAlgorithm() {
+  // baseline function from algorithm.js
+  if (typeof window.TorqueVectoring === "function") {
+    activeTV = window.TorqueVectoring;
+    liveBadge.textContent = "Using algorithm.js";
+  } else {
+    activeTV = null;
+    liveBadge.textContent = "No algorithm.js function";
+  }
+
+  // Fill editor with the CURRENT function body from algorithm.js
+  if (typeof window.getTorqueVectoringSource === "function") {
+    const src = window.getTorqueVectoringSource();
+    algoEditor.value = extractBodyFromFunctionSource(src);
+  } else {
+    algoEditor.value = ""; // fallback
+  }
+
+  btnApplyAlgo.disabled = false;
 }
 
 function compileEditorToFunction(srcBody) {
