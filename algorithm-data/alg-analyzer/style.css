@@ -307,12 +307,42 @@ canvas {
 
 /* make canvas height responsive */
 canvas {
-    height: min(65vh, 620px);
+    height: min(50vh, 620px);
 }
 
-textarea#algoEditor {
+/* Two-column editor area under the chart */
+.editgrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+
+@media (max-width: 1100px) {
+    .editgrid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Two-column editor area under the chart */
+.editgrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+
+    /* IMPORTANT: top-align both columns so params doesn't "sink" */
+    align-items: start;
+}
+
+@media (max-width: 1100px) {
+    .editgrid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Editors */
+textarea#algoEditor,
+textarea#paramsEditor {
     width: 100%;
-    min-height: 260px;
     resize: vertical;
     background: rgba(8, 12, 18, 0.85);
     color: var(--text);
@@ -326,4 +356,18 @@ textarea#algoEditor {
         "Liberation Mono", monospace;
     white-space: pre;
     overflow: auto;
+
+    /* prevents weird baseline stretching in grid items */
+    align-self: stretch;
+}
+
+/* Make them visually balanced by default */
+textarea#paramsEditor {
+    color: #99ff99;
+    min-height: 250px;
+}
+
+textarea#algoEditor {
+    color: #9999ff;
+    min-height: 250px;
 }

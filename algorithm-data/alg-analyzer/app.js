@@ -36,9 +36,10 @@ const m_rr = el("m_rr");
 const canvas = el("chart");
 const ctx = canvas.getContext("2d");
 
+const paramsEditor = el("paramsEditor");
+const algoEditor = el("algoEditor");
 const btnApplyAlgo = el("btnApplyAlgo");
 const cbAutoApply = el("cbAutoApply");
-const algoEditor = el("algoEditor");
 const algoErr = el("algoErr");
 const liveBadge = el("liveBadge");
 
@@ -496,7 +497,29 @@ function draw() {
   const xMap = (x) => pad.l + ((x - minX) / (maxX - minX || 1)) * pw;
   const yMap = (y) => pad.t + ph - ((y - minY) / (maxY - minY || 1)) * ph;
 
-  const dashSim = [10, 8]; // dashed simulated
+  // ---- zero line (y = 0) ----
+  if (minY < 0 && maxY > 0) {
+    // only if zero is in visible range
+    const y0 = yMap(0);
+
+    ctx.save();
+    ctx.strokeStyle = "rgba(255,255,255,0.25)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([6, 6]); // dashed center line
+    ctx.beginPath();
+    ctx.moveTo(pad.l, y0);
+    ctx.lineTo(pad.l + pw, y0);
+    ctx.stroke();
+
+    // optional label
+    ctx.fillStyle = "rgba(255,255,255,0.45)";
+    ctx.font = "11px ui-sans-serif, system-ui";
+    ctx.fillText("0", pad.l - 18, y0 + 4);
+
+    ctx.restore();
+  }
+
+  const dashSim = [3, 2]; // dashed simulated
 
   // Draw selected wheels
   if (show.fl) {
@@ -552,29 +575,40 @@ function extractBodyFromFunctionSource(fnSrc) {
 }
 
 function initAlgorithm() {
-  // baseline function from algorithm.js
-  if (typeof window.TorqueVectoring === "function") {
+  if (typeof window.TorqueVectoring === "function")
     activeTV = window.TorqueVectoring;
-    liveBadge.textContent = "Using algorithm.js";
+
+  // fill params editor
+  if (typeof window.getParamsSource === "function") {
+    paramsEditor.value = window.getParamsSource();
   } else {
-    activeTV = null;
-    liveBadge.textContent = "No algorithm.js function";
+    paramsEditor.value = "const params = { TV: {} };\n";
   }
 
-  // Fill editor with the CURRENT function body from algorithm.js
+  // fill algorithm body editor from file
   if (typeof window.getTorqueVectoringSource === "function") {
-    const src = window.getTorqueVectoringSource();
-    algoEditor.value = extractBodyFromFunctionSource(src);
+    algoEditor.value = extractBodyFromFunctionSource(
+      window.getTorqueVectoringSource(),
+    );
   } else {
-    algoEditor.value = ""; // fallback
+    algoEditor.value = "";
   }
 
   btnApplyAlgo.disabled = false;
 }
 
-function compileEditorToFunction(srcBody) {
-  // Create a function with the exact signature.
-  // NOTE: This is eval-like. Fine for local dev.
+function compileEditorToFunction(paramsSrc, bodySrc) {
+  // Create a params object from paramsSrc
+  // Expect paramsSrc to define `const params = ...;` OR `params = ...;` and then `return params;`
+  const makeParams = new Function(`
+    "use strict";
+    ${paramsSrc}
+    if (typeof params === "undefined") throw new Error("params is not defined in params block");
+    return params;
+  `);
+
+  const paramsObj = makeParams();
+
   const fn = new Function(
     "currGear",
     "t",
@@ -584,16 +618,24 @@ function compileEditorToFunction(srcBody) {
     "clamp",
     "Torques",
     "Gear",
-    srcBody,
+    "params",
+    `"use strict";\n${bodySrc}`,
   );
 
-  // Wrap: validate output + clamp
   return (currGear, t, s, lastFront, lastRear) => {
-    const out = fn(currGear, t, s, lastFront, lastRear, clamp, Torques, Gear);
+    const out = fn(
+      currGear,
+      t,
+      s,
+      lastFront,
+      lastRear,
+      clamp,
+      Torques,
+      Gear,
+      paramsObj,
+    );
     if (!out || typeof out !== "object")
-      throw new Error("Must return an object {fl,fr,rl,rr}.");
-
-    // saturate like int16-ish and your app range
+      throw new Error("Must return {fl,fr,rl,rr}.");
     return {
       fl: Math.max(-1000, Math.min(1000, safeInt(out.fl))),
       fr: Math.max(-1000, Math.min(1000, safeInt(out.fr))),
@@ -606,8 +648,10 @@ function compileEditorToFunction(srcBody) {
 function applyEditorAlgorithm() {
   algoErr.textContent = "";
   try {
-    const src = algoEditor.value;
-    const compiled = compileEditorToFunction(src);
+    const compiled = compileEditorToFunction(
+      paramsEditor.value,
+      algoEditor.value,
+    );
 
     // quick smoke test (doesn't prove correctness, just catches obvious issues)
     compiled(
@@ -619,7 +663,6 @@ function applyEditorAlgorithm() {
     );
 
     activeTV = compiled;
-    lastGoodSource = src;
     liveBadge.textContent = "Using live editor ✅";
 
     // Re-run instantly if we already have data
@@ -639,6 +682,10 @@ function scheduleAutoApply() {
 // ---- Events ----
 
 btnApplyAlgo.addEventListener("click", applyEditorAlgorithm);
+
+paramsEditor.addEventListener("input", () => {
+  if (cbAutoApply.checked) scheduleAutoApply();
+});
 
 algoEditor.addEventListener("input", () => {
   if (cbAutoApply.checked) scheduleAutoApply();

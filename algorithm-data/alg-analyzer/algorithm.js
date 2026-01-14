@@ -10,6 +10,46 @@ function Torques(fl = 0, fr = 0, rl = 0, rr = 0) {
   return { fl: fl | 0, fr: fr | 0, rl: rl | 0, rr: rr | 0 };
 }
 
+// ---------- helpers ----------
+const clampF = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+const lerp = (a, b, u) => a + (b - a) * u;
+const absf = (x) => (x >= 0 ? x : -x);
+const signOf = (v) => (v > 0 ? 1 : v < 0 ? -1 : 0);
+
+const timeScaling = 5;
+
+const params = {
+  TV: {
+    MaxTorquePerTick: 0.5,
+    SteerTorqueLowFactor: 1.0,
+    SteerTorqueHighFactor: 0.7,
+    SteerTorqueHighSpeed: 30.0,
+    RearFadeSpeed0: 15.0,
+    RearFadeSpeed1: 30.0,
+    RearFadeThrottle0: 0.05,
+    RearFadeThrottle1: 0.3,
+    SteerTorqueFront: 220.0,
+    SteerTorqueRear: 260.0,
+    SlipRatio: 0.2,
+    SlipDownFactor: 0.5,
+    SlipMinScale: 0.25,
+    SlipRecoverPerTick: 0.2 * timeScaling,
+    SlipSpeedEps: 20.0,
+    SlipTorqueEps: 0.1,
+    DriveFrontShareLow: 0.55,
+    DriveFrontShareHigh: 0.3,
+    BrakeFrontShareLow: 0.6,
+    BrakeFrontShareHigh: 0.8,
+    BiasHighThrottle: 0.6,
+    maxDrivePower: 400,
+    maxBrakePower: 600,
+    maxSpeedForward: 400,
+    maxSpeedReverse: 60,
+    SpeedLimiterFadeBand: 30.0,
+    AntiReversingSpeed: 100.0,
+  },
+};
+
 // currGear: 0=N,1=D,2=R
 // lastFront/lastRear: { receivedTorqueL, receivedTorqueR, rpmL, rpmR }
 // Helpers: clamp(x,lo,hi), Torques(fl,fr,rl,rr), Gear
@@ -23,64 +63,26 @@ function Torques(fl = 0, fr = 0, rl = 0, rr = 0) {
 // Helpers assumed to exist: clamp(x,lo,hi), Torques(fl,fr,rl,rr), Gear
 
 function TorqueVectoring(currGear, t, s, lastFront, lastRear) {
-  // ---------- params (DriveParams::Defaults()) ----------
-  const params = {
-    SpeedLimiterFadeBand: 30.0,
-    Brakes: { AntiReversingSpeed: 100.0 },
-    TV: {
-      MaxTorquePerTick: 0.5,
-      SteerTorqueLowFactor: 1.0,
-      SteerTorqueHighFactor: 0.7,
-      SteerTorqueHighSpeed: 30.0,
-      RearFadeSpeed0: 15.0,
-      RearFadeSpeed1: 30.0,
-      RearFadeThrottle0: 0.05,
-      RearFadeThrottle1: 0.3,
-      SteerTorqueFront: 220.0,
-      SteerTorqueRear: 260.0,
-      SlipRatio: 0.2,
-      SlipDownFactor: 0.7,
-      SlipMinScale: 0.25,
-      SlipRecoverPerTick: 0.2,
-      SlipSpeedEps: 20.0,
-      SlipTorqueEps: 0.1,
-      DriveFrontShareLow: 0.55,
-      DriveFrontShareHigh: 0.3,
-      BrakeFrontShareLow: 0.6,
-      BrakeFrontShareHigh: 0.8,
-      BiasHighThrottle: 0.6,
-    },
-  };
+  const state =
+    TorqueVectoring._state ||
+    (TorqueVectoring._state = {
+      vehicleSpeed: 0,
 
-  const state = {
-    maxDrivePower: 250, // like state.maxDrivePower
-    maxBrakePower: 600, // like state.maxBrakePower
-    maxSpeedForward: 100, // like state.maxSpeedForward
-    maxSpeedReverse: 60, // like state.maxSpeedReverse
-
-    vehicleSpeed: 0,
-
-    // persistent statics from C++
-    lastTdRear: 0,
-    lastTdFront: 0,
-    slipScale_fl: 1,
-    slipScale_fr: 1,
-    slipScale_rl: 1,
-    slipScale_rr: 1,
-  };
+      // persistent statics from C++
+      lastTdRear: 0,
+      lastTdFront: 0,
+      slipScale_fl: 1,
+      slipScale_fr: 1,
+      slipScale_rl: 1,
+      slipScale_rr: 1,
+    });
 
   // ---------- early outs ----------
   if (currGear === Gear.N) return Torques(0, 0, 0, 0);
   const allowRearYawAssist = currGear === Gear.D;
 
-  // ---------- helpers ----------
-  const clampF = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
-  const lerp = (a, b, u) => a + (b - a) * u;
-  const absf = (x) => (x >= 0 ? x : -x);
-  const signOf = (v) => (v > 0 ? 1 : v < 0 ? -1 : 0);
-
   // C++ used maxT = drivePower if throttle>0 else brakePower
-  const maxT = t > 0 ? state.maxDrivePower : state.maxBrakePower;
+  const maxT = t > 0 ? params.TV.maxDrivePower : params.TV.maxBrakePower;
 
   const throttleInput = (t * maxT) / 1000.0; // [-maxT..+maxT]
 
@@ -133,13 +135,12 @@ function TorqueVectoring(currGear, t, s, lastFront, lastRear) {
 
   // ---------- vehicle speed (median) + speed limiter fade ----------
   const vehicleSpeed = median_wheelspeeds();
-  state.vehicleSpeed = vehicleSpeed | 0;
 
   const allowedMaxSpeed =
-    currGear === Gear.D ? state.maxSpeedForward : state.maxSpeedReverse;
-  const start = allowedMaxSpeed - params.SpeedLimiterFadeBand;
+    currGear === Gear.D ? params.TV.maxSpeedForward : params.TV.maxSpeedReverse;
+  const start = allowedMaxSpeed - params.TV.SpeedLimiterFadeBand;
 
-  let spdFade = (vehicleSpeed - start) / params.SpeedLimiterFadeBand; // [0..1]
+  let spdFade = (vehicleSpeed - start) / params.TV.SpeedLimiterFadeBand; // [0..1]
   spdFade = clampF(spdFade, 0.0, 1.0);
 
   const throttle =
@@ -148,7 +149,7 @@ function TorqueVectoring(currGear, t, s, lastFront, lastRear) {
       : throttleInput;
 
   // ---------- braking anti-reversing fade ----------
-  const vFadeDen = params.Brakes.AntiReversingSpeed;
+  const vFadeDen = params.TV.AntiReversingSpeed;
 
   const brakeScale = (sp) => {
     if (sp == null || vFadeDen <= 1.0) return 1.0; // if speed missing: keep braking
@@ -377,4 +378,6 @@ function TorqueVectoring(currGear, t, s, lastFront, lastRear) {
 }
 
 // ✅ Provide the function source to the UI
+window.getParamsSource = () =>
+  `const params = ${JSON.stringify(params, null, 2)};\n`;
 window.getTorqueVectoringSource = () => TorqueVectoring.toString();

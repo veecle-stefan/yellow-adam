@@ -53,29 +53,7 @@
 
         <div id="loadErr" class="err"></div>
         
-        <div class="hd">
-          <span>Live Algorithm</span>
-          <span class="pill" id="liveBadge">Using algorithm.js</span>
-        </div>
         
-        <div class="bd stack">
-          <div class="row">
-            <button id="btnApplyAlgo" class="secondary" disabled>Apply</button>
-            <label class="chk tiny muted" style="justify-content:flex-start;gap:10px;">
-              <input type="checkbox" id="cbAutoApply">
-              Auto-apply (debounced)
-            </label>
-          </div>
-        
-          <textarea id="algoEditor" spellcheck="false"></textarea>
-        
-          <div class="tiny muted">
-            Write the <b>function body only</b>. Must <code>return {fl,fr,rl,rr}</code>.
-            Helpers available: <code>clamp()</code>, <code>Torques()</code>, <code>Gear</code>.
-          </div>
-        
-          <div id="algoErr" class="err"></div>
-        </div>
       </div>
 
       <div class="hd">
@@ -173,6 +151,38 @@
 
         <div id="runInfo" class="tiny muted">Load a file, then click “Replay & Compare”.</div>
         <div id="runErr" class="err"></div>
+        <div class="hd">
+          <span>Live Algorithm</span>
+          <span class="pill" id="liveBadge">Using algorithm.js</span>
+        </div>
+        
+        <div class="bd stack">
+          <div class="row">
+            <button id="btnApplyAlgo" class="secondary" disabled>Apply</button>
+            <label class="chk tiny muted" style="justify-content:flex-start;gap:10px;">
+              <input type="checkbox" id="cbAutoApply">
+              Auto-apply (debounced)
+            </label>
+          </div>
+        
+          <div class="editgrid">
+            <div class="stack">
+              <label class="tiny muted"><b>params</b></label>
+              <textarea id="paramsEditor" spellcheck="false"></textarea>
+            </div>
+        
+            <div class="stack">
+              <label class="tiny muted"><b>TorqueVectoring body</b></label>
+              <textarea id="algoEditor" spellcheck="false"></textarea>
+            </div>
+          </div>
+        
+          <div class="tiny muted">
+            Params are available as <code>params</code>. Algorithm must <code>return {fl,fr,rl,rr}</code>.
+          </div>
+        
+          <div id="algoErr" class="err"></div>
+        </div>
       </div>
     </section>
   </main>
