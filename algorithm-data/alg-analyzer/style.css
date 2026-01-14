@@ -309,3 +309,21 @@ canvas {
 canvas {
     height: min(65vh, 620px);
 }
+
+textarea#algoEditor {
+    width: 100%;
+    min-height: 260px;
+    resize: vertical;
+    background: rgba(8, 12, 18, 0.85);
+    color: var(--text);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    padding: 10px;
+    font-size: 12px;
+    line-height: 1.35;
+    font-family:
+        ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+        "Liberation Mono", monospace;
+    white-space: pre;
+    overflow: auto;
+}

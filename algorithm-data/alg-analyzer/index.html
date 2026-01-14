@@ -52,6 +52,30 @@
         </div>
 
         <div id="loadErr" class="err"></div>
+        
+        <div class="hd">
+          <span>Live Algorithm</span>
+          <span class="pill" id="liveBadge">Using algorithm.js</span>
+        </div>
+        
+        <div class="bd stack">
+          <div class="row">
+            <button id="btnApplyAlgo" class="secondary" disabled>Apply</button>
+            <label class="chk tiny muted" style="justify-content:flex-start;gap:10px;">
+              <input type="checkbox" id="cbAutoApply">
+              Auto-apply (debounced)
+            </label>
+          </div>
+        
+          <textarea id="algoEditor" spellcheck="false"></textarea>
+        
+          <div class="tiny muted">
+            Write the <b>function body only</b>. Must <code>return {fl,fr,rl,rr}</code>.
+            Helpers available: <code>clamp()</code>, <code>Torques()</code>, <code>Gear</code>.
+          </div>
+        
+          <div id="algoErr" class="err"></div>
+        </div>
       </div>
 
       <div class="hd">
@@ -72,7 +96,7 @@
 
         <div class="row">
           <div>
-            <label for="plotOverlay">Overlay (recorded, scaled to fit)</label>
+            <label for="plotOverlay">Overlay (same scale)</label>
             <select id="plotOverlay">
               <option value="">None</option>
               <option value="t" selected>t (throttle)</option>
@@ -112,19 +136,6 @@
           Overlay is scaled into the current Y-range so it’s visible (yellow line).
         </div>
       </div>
-
-        </div>
-
-        <div class="row">
-          <div>
-            <label for="stride">Downsample stride (draw every Nth row)</label>
-            <input id="stride" type="number" min="1" step="1" value="1" />
-          </div>
-          <div>
-            <label for="timeWindow">Time window (ms, 0 = full)</label>
-            <input id="timeWindow" type="number" min="0" step="100" value="0" />
-          </div>
-        </div>
 
         <div class="tiny muted">
           Notes: “Simulated” exists only for <code>tq_*</code>. If primary is e.g. <code>rpm_fl</code>, you’ll see recorded only.

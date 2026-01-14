@@ -36,6 +36,45 @@ const m_rr = el("m_rr");
 const canvas = el("chart");
 const ctx = canvas.getContext("2d");
 
+const btnApplyAlgo = el("btnApplyAlgo");
+const cbAutoApply = el("cbAutoApply");
+const algoEditor = el("algoEditor");
+const algoErr = el("algoErr");
+const liveBadge = el("liveBadge");
+
+let activeTV = null; // the function we actually call
+let lastGoodSource = ""; // last compiled editor text
+let autoApplyTimer = 0;
+
+const EDITOR_TEMPLATE = `// Function body only. Return {fl,fr,rl,rr}.
+//
+// Signature:
+//   TorqueVectoring(currGear, t, s, lastFront, lastRear)
+// currGear: 0=N,1=D,2=R
+// lastFront/lastRear: { receivedTorqueL, receivedTorqueR, rpmL, rpmR }
+//
+// Helpers: clamp(x,lo,hi), Torques(fl,fr,rl,rr), Gear
+
+if (currGear === Gear.N) return Torques(0,0,0,0);
+
+// Example baseline: split throttle equally, small steer bias
+let base = clamp(t, -1000, 1000);
+let bias = (clamp(s, -1000, 1000) / 1000) * 200;
+
+let left  = base + bias;
+let right = base - bias;
+
+// Reverse gear flips sign (adjust if your vehicle differs)
+if (currGear === Gear.R) { left = -left; right = -right; }
+
+return Torques(
+  clamp(Math.round(left/2),  -1000, 1000),
+  clamp(Math.round(right/2), -1000, 1000),
+  clamp(Math.round(left/2),  -1000, 1000),
+  clamp(Math.round(right/2), -1000, 1000),
+);
+`;
+
 // ---- State ----
 let dataset = null; // {header, rows}
 let sim = null; // computed arrays
@@ -188,6 +227,7 @@ async function loadFile(file) {
     runInfo.textContent = "Ready. Click “Replay & Compare”.";
     clearCanvas();
     resetMetrics();
+    runReplay();
   } catch (e) {
     dataset = null;
     loadErr.textContent = String(e?.message || e);
@@ -208,9 +248,9 @@ function runReplay() {
   runErr.textContent = "";
   if (!dataset) return;
 
-  if (typeof TorqueVectoring !== "function") {
+  if (typeof activeTV !== "function") {
     runErr.textContent =
-      "TorqueVectoring() not found. Did algorithm.js load correctly?";
+      "No active TorqueVectoring function. Use the Live Algorithm editor (Apply).";
     return;
   }
 
@@ -267,7 +307,7 @@ function runReplay() {
 
     let out;
     try {
-      out = TorqueVectoring(currGear, t, s, lastFront, lastRear) || {
+      out = activeTV(currGear, t, s, lastFront, lastRear) || {
         fl: 0,
         fr: 0,
         rl: 0,
@@ -391,12 +431,13 @@ function draw() {
   }
 
   // Determine Y range from selected torque series only (so overlay doesn’t wreck scaling)
-  let yAll = [];
-  if (show.fl) yAll = yAll.concat(series.fl_rec, series.fl_sim);
-  if (show.fr) yAll = yAll.concat(series.fr_rec, series.fr_sim);
-  if (show.rl) yAll = yAll.concat(series.rl_rec, series.rl_sim);
-  if (show.rr) yAll = yAll.concat(series.rr_rec, series.rr_sim);
-  yAll = yAll.filter(Number.isFinite);
+  // Always scale using ALL torques (stable axis)
+  let yAll = []
+    .concat(series.fl_rec, series.fl_sim)
+    .concat(series.fr_rec, series.fr_sim)
+    .concat(series.rl_rec, series.rl_sim)
+    .concat(series.rr_rec, series.rr_sim)
+    .filter(Number.isFinite);
 
   const { min: minX, max: maxX } = minMax(xs);
   const { min: minY0, max: maxY0 } = minMax(yAll);
@@ -404,19 +445,33 @@ function draw() {
   const minY = minY0 - padY;
   const maxY = maxY0 + padY;
 
-  // Normalize overlay into torque Y-range so it’s visible
-  let ovScaled = series.ov;
-  if (overlayOn) {
-    const ovFinite = series.ov.filter(Number.isFinite);
-    const { min: ovMin, max: ovMax } = minMax(ovFinite);
-    const denom = ovMax - ovMin || 1;
-    ovScaled = series.ov.map((v) => {
-      if (!Number.isFinite(v)) return NaN;
-      const t = (v - ovMin) / denom; // 0..1
-      return minY + t * (maxY - minY);
-    });
-  }
+  // Overlay handling:
+  // For t/s (and tq_*), plot RAW so values match the torque axis (e.g. 300 == 300).
+  // For other signals (rpm/cu/etc), keep the old "fit into axis" behavior so it stays visible.
+  let ovPlot = series.ov;
 
+  if (overlayOn) {
+    const sameUnit =
+      overlayName === "t" ||
+      overlayName === "s" ||
+      overlayName === "tq_fl" ||
+      overlayName === "tq_fr" ||
+      overlayName === "tq_rl" ||
+      overlayName === "tq_rr";
+
+    if (!sameUnit) {
+      // Fit overlay into torque axis (shape-only)
+      const ovFinite = series.ov.filter(Number.isFinite);
+      const { min: ovMin, max: ovMax } = minMax(ovFinite);
+      const denom = ovMax - ovMin || 1;
+
+      ovPlot = series.ov.map((v) => {
+        if (!Number.isFinite(v)) return NaN;
+        const u = (v - ovMin) / denom; // 0..1
+        return minY + u * (maxY - minY);
+      });
+    }
+  }
   // Layout
 
   const pad = { l: 70, r: 18, t: 22, b: 36 };
@@ -491,7 +546,7 @@ function draw() {
   }
 
   if (overlayOn) {
-    drawLine(xs, ovScaled, xMap, yMap, C.ov, 1.5);
+    drawLine(xs, ovPlot, xMap, yMap, C.ov, 1.5);
   }
 }
 
@@ -516,7 +571,91 @@ function resizeCanvasToDisplaySize() {
   // Return CSS size so draw() can use it if needed
   return { cssW, cssH, dpr };
 }
+
+function initAlgorithm() {
+  algoEditor.value = EDITOR_TEMPLATE;
+  btnApplyAlgo.disabled = false;
+
+  // auto-apply once so replay can run immediately
+  applyEditorAlgorithm();
+}
+
+function compileEditorToFunction(srcBody) {
+  // Create a function with the exact signature.
+  // NOTE: This is eval-like. Fine for local dev.
+  const fn = new Function(
+    "currGear",
+    "t",
+    "s",
+    "lastFront",
+    "lastRear",
+    "clamp",
+    "Torques",
+    "Gear",
+    srcBody,
+  );
+
+  // Wrap: validate output + clamp
+  return (currGear, t, s, lastFront, lastRear) => {
+    const out = fn(currGear, t, s, lastFront, lastRear, clamp, Torques, Gear);
+    if (!out || typeof out !== "object")
+      throw new Error("Must return an object {fl,fr,rl,rr}.");
+
+    // saturate like int16-ish and your app range
+    return {
+      fl: Math.max(-1000, Math.min(1000, safeInt(out.fl))),
+      fr: Math.max(-1000, Math.min(1000, safeInt(out.fr))),
+      rl: Math.max(-1000, Math.min(1000, safeInt(out.rl))),
+      rr: Math.max(-1000, Math.min(1000, safeInt(out.rr))),
+    };
+  };
+}
+
+function applyEditorAlgorithm() {
+  algoErr.textContent = "";
+  try {
+    const src = algoEditor.value;
+    const compiled = compileEditorToFunction(src);
+
+    // quick smoke test (doesn't prove correctness, just catches obvious issues)
+    compiled(
+      1,
+      0,
+      0,
+      { receivedTorqueL: 0, receivedTorqueR: 0, rpmL: 0, rpmR: 0 },
+      { receivedTorqueL: 0, receivedTorqueR: 0, rpmL: 0, rpmR: 0 },
+    );
+
+    activeTV = compiled;
+    lastGoodSource = src;
+    liveBadge.textContent = "Using live editor ✅";
+
+    // Re-run instantly if we already have data
+    if (dataset) runReplay();
+  } catch (e) {
+    algoErr.textContent = "Compile/apply error: " + (e?.message || e);
+  }
+}
+
+function scheduleAutoApply() {
+  clearTimeout(autoApplyTimer);
+  autoApplyTimer = setTimeout(() => {
+    if (cbAutoApply.checked) applyEditorAlgorithm();
+  }, 400);
+}
+
 // ---- Events ----
+
+btnApplyAlgo.addEventListener("click", applyEditorAlgorithm);
+
+algoEditor.addEventListener("input", () => {
+  if (cbAutoApply.checked) scheduleAutoApply();
+});
+
+cbAutoApply.addEventListener("change", () => {
+  if (cbAutoApply.checked) scheduleAutoApply();
+});
+
 fileInput.addEventListener("change", async () => {
   const f = fileInput.files?.[0];
   if (f) await loadFile(f);
@@ -580,3 +719,4 @@ window.addEventListener("resize", () => {
 
 // init
 clearCanvas();
+initAlgorithm();
