@@ -47,7 +47,7 @@ namespace
         {"SlipRatio", &DriveParams::TVParams::SlipRatio, 0.0f, 1.0f},
         {"SlipDownFactor", &DriveParams::TVParams::SlipDownFactor, 0.0f, 1.0f},
         {"SlipMinTorque", &DriveParams::TVParams::SlipMinTorque, 10.0f, 500.0f},
-        {"SlipRecoverPerTick", &DriveParams::TVParams::SlipRecoverPerTick, 0.0f, 1.0f},
+        {"SlipRecoverTorquePerTick", &DriveParams::TVParams::SlipRecoverTorquePerTick, 1.0f, 300.0f},
         {"SlipSpeedEps", &DriveParams::TVParams::SlipSpeedEps, 0.0f, 500.0f},
 
         // ----- Front/rear bias -----

@@ -37,10 +37,10 @@ struct DriveParams
     struct TVParams
     {
         // Maximum allowed change of steering-related torque per control tick,
-        // expressed as a fraction of MaxOutputLimit.
+        // expressed as a absolute torque.
         // Limits how fast torque steer / yaw assist can ramp to avoid mechanical shocks.
-        // Default: 0.3
-        float MaxTorquePerTick = 0.5f;
+        // Default: 50
+        float MaxTorquePerTick = 50.f;
 
         // Front axle steering torque gain at standstill / very low speed.
         // Used to overcome rack centering spring and static friction.
@@ -105,12 +105,12 @@ struct DriveParams
 
         // Lower bound for slip scaling (never reduce below this).
         // Prevents permanent "torque = 0" and allows recovery.
-        // Default: 0.25
+        // Default: 50 (absolute torque value)
         float SlipMinTorque = 50.f;
 
         // Recovery rate per tick when no slip is detected (towards 1.0).
         // Default: 0.10
-        float SlipRecoverPerTick = 0.20f;
+        float SlipRecoverTorquePerTick = 50.f;
 
         // Minimum reference speed to activate slip detection (noise floor).
         // Default: 10.0
