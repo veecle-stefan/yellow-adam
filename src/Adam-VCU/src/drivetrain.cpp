@@ -363,7 +363,7 @@ void DriveTrain::CheckGear(const TickContext& ctx, VehicleState& state)
         return;
     }
     // check for double-tap on the brake while not moving
-    if (ctx.user.doubleTap && ctx.currFront && (ctx.currFront->sample.speedL_meas == 0) && (ctx.currFront->sample.speedR_meas == 0)) {
+    if (ctx.user.doubleTap && state.vehicleSpeed == 0) {
         if (state.currGear == Gear::D) {
             state.currGear = Gear::R;
         } else {
@@ -387,6 +387,7 @@ DriveTrain::TickDecision DriveTrain::ComputeDecision(const TickContext& ctx, Veh
 
     // 3) torques
     dec.torques = tv.Compute(ctx, state.currGear);
+    state.vehicleSpeed = dec.torques.vehicleSpeedAbs;
 
     // 4) safety command
     dec.cmd = ControllerSafety(ctx, state);

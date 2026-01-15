@@ -34,7 +34,7 @@ public:
         DriveParams* params = nullptr;
     };
 
-    struct Torques { int16_t fl=0, fr=0, rl=0, rr=0; };
+    struct Torques { int16_t fl=0, fr=0, rl=0, rr=0; float vehicleSpeedAbs;};
 
     Torques Compute(const TickContext& ctx, const Gear& currGear);
 

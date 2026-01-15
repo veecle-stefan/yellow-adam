@@ -28,42 +28,66 @@ namespace
     // IMPORTANT:
     // The index in this table is the ParamId used by Tuning::SetByID().
     // Keep this order stable once you start using IDs in tools/UI.
+    // driveparams.cpp (or wherever your tuning table lives)
     static constexpr TVParamEntry kTVParams[] = {
-        // ----- Torque vectoring / steering gains -----
-        {"MaxTorquePerTick", &DriveParams::TVParams::MaxTorquePerTick, 0.0f, 1.0f},
-        {"SteerTorqueLowFactor", &DriveParams::TVParams::SteerTorqueLowFactor, 0.0f, 1.0f},
-        {"SteerTorqueHighFactor", &DriveParams::TVParams::SteerTorqueHighFactor, 0.0f, 1.0f},
-        {"SteerTorqueHighSpeed", &DriveParams::TVParams::SteerTorqueHighSpeed, 0.0f, 500.0f},
 
-        {"RearFadeSpeed0", &DriveParams::TVParams::RearFadeSpeed0, 0.0f, 500.0f},
-        {"RearFadeSpeed1", &DriveParams::TVParams::RearFadeSpeed1, 0.0f, 500.0f},
-        {"RearFadeThrottle0", &DriveParams::TVParams::RearFadeThrottle0, 0.0f, 1.0f},
-        {"RearFadeThrottle1", &DriveParams::TVParams::RearFadeThrottle1, 0.0f, 1.0f},
+        // =========================================================================
+        // Output / safety limits (profile)
+        // =========================================================================
+        {"maxTorqueDrive", &DriveParams::TVParams::maxTorqueDrive, 0.0f, 1000.0f},
+        {"maxTorqueBrake", &DriveParams::TVParams::maxTorqueBrake, 0.0f, 1000.0f},
+
+        {"maxSpeedFwd", &DriveParams::TVParams::maxSpeedFwd, 0.0f, 2000.0f},
+        {"maxSpeedRev", &DriveParams::TVParams::maxSpeedRev, 0.0f, 2000.0f},
+        {"SpeedLimiterFadeBand", &DriveParams::TVParams::SpeedLimiterFadeBand, 0.0f, 500.0f},
+
+        // =========================================================================
+        // Steering torques
+        // =========================================================================
+        // NOTE: now absolute torque-per-tick, not a fraction.
+        {"MaxTorquePerTick", &DriveParams::TVParams::MaxTorquePerTick, 0.0f, 500.0f},
 
         {"SteerTorqueFront", &DriveParams::TVParams::SteerTorqueFront, 0.0f, 1000.0f},
         {"SteerTorqueRear", &DriveParams::TVParams::SteerTorqueRear, 0.0f, 1000.0f},
 
-        // ----- ABS/ASR slip control -----
+        {"SteerTorqueLowFactor", &DriveParams::TVParams::SteerTorqueLowFactor, 0.0f, 2.0f},
+        {"SteerTorqueHighFactor", &DriveParams::TVParams::SteerTorqueHighFactor, 0.0f, 2.0f},
+        {"SteerTorqueHighSpeed", &DriveParams::TVParams::SteerTorqueHighSpeed, 0.0f, 2000.0f},
+
+        {"RearFadeSpeed0", &DriveParams::TVParams::RearFadeSpeed0, 0.0f, 2000.0f},
+        {"RearFadeSpeed1", &DriveParams::TVParams::RearFadeSpeed1, 0.0f, 2000.0f},
+        {"RearFadeTorque0", &DriveParams::TVParams::RearFadeTorque0, 0.0f, 1000.0f},
+        {"RearFadeTorque1", &DriveParams::TVParams::RearFadeTorque1, 0.0f, 1000.0f},
+
+        // =========================================================================
+        // Traction / ABS
+        // =========================================================================
         {"SlipRatio", &DriveParams::TVParams::SlipRatio, 0.0f, 1.0f},
         {"SlipDownFactor", &DriveParams::TVParams::SlipDownFactor, 0.0f, 1.0f},
-        {"SlipMinTorque", &DriveParams::TVParams::SlipMinTorque, 10.0f, 500.0f},
-        {"SlipRecoverTorquePerTick", &DriveParams::TVParams::SlipRecoverTorquePerTick, 1.0f, 300.0f},
-        {"SlipSpeedEps", &DriveParams::TVParams::SlipSpeedEps, 0.0f, 500.0f},
 
-        // ----- Front/rear bias -----
+        // These are absolute torque units now (good). Keep them <= max torque ranges.
+        {"SlipMinTorque", &DriveParams::TVParams::SlipMinTorque, 0.0f, 500.0f},
+        {"SlipRecoverTorquePerTick", &DriveParams::TVParams::SlipRecoverTorquePerTick, 0.0f, 500.0f},
+
+        {"SlipSpeedEps", &DriveParams::TVParams::SlipSpeedEps, 0.0f, 500.0f},
+        {"maxRealisticAccel", &DriveParams::TVParams::maxRealisticAccel, 0.0f, 500.0f},
+        {"maxRealisticDecel", &DriveParams::TVParams::maxRealisticDecel, 0.0f, 500.0f},
+
+        // =========================================================================
+        // Front/rear bias
+        // =========================================================================
         {"DriveFrontShareLow", &DriveParams::TVParams::DriveFrontShareLow, 0.0f, 1.0f},
         {"DriveFrontShareHigh", &DriveParams::TVParams::DriveFrontShareHigh, 0.0f, 1.0f},
         {"BrakeFrontShareLow", &DriveParams::TVParams::BrakeFrontShareLow, 0.0f, 1.0f},
         {"BrakeFrontShareHigh", &DriveParams::TVParams::BrakeFrontShareHigh, 0.0f, 1.0f},
-        {"BiasHighThrottle", &DriveParams::TVParams::BiasHighThrottle, 0.0f, 5.0f},
 
-        // ----- Profiles
-        {"SpeedLimiterFadeBand", &DriveParams::TVParams::SpeedLimiterFadeBand, 10.0f, 100.0f},
-        {"AntiReversingSpeed", &DriveParams::TVParams::AntiReversingSpeed, 1.0f, 200.0f},
-        {"maxSpeedFwd", &DriveParams::TVParams::maxSpeedFwd, 50.0f, 1000.0f},
-        {"maxSpeedRev", &DriveParams::TVParams::maxSpeedRev, 50.0f, 1000.0f},
-        {"maxPowerDrive", &DriveParams::TVParams::maxPowerDrive, 50.0f, 1000.0f},
-        {"maxPowerBrake", &DriveParams::TVParams::maxPowerBrake, 50.0f, 1000.0f},
+        {"FrontRearBiasFullTorqueDrive", &DriveParams::TVParams::FrontRearBiasFullTorqueDrive, 0.0f, 1000.0f},
+        {"FrontRearBiasFullTorqueBrake", &DriveParams::TVParams::FrontRearBiasFullTorqueBrake, 0.0f, 1000.0f},
+
+        // =========================================================================
+        // Braking near standstill
+        // =========================================================================
+        {"AntiReversingSpeed", &DriveParams::TVParams::AntiReversingSpeed, 0.0f, 500.0f},
     };
 
     static constexpr uint16_t kTVParamCount =

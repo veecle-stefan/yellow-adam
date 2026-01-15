@@ -179,31 +179,84 @@ initProfilesUI();
 // IMPORTANT: ID must match the table index in driveParams.cpp (kTVParams order).
 // You said it's OK to hard-code this in JS to save memory on ESP32.
 const tuningKeys = [
-  { id: 0,  name: "MaxTorquePerTick",      min: 0.0, max: 1.0 },
-  { id: 1,  name: "SteerTorqueLowFactor",  min: 0.0, max: 1.0 },
-  { id: 2,  name: "SteerTorqueHighFactor", min: 0.0, max: 1.0 },
-  { id: 3,  name: "SteerTorqueHighSpeed",  min: 0.0, max: 500.0 },
+  // ----- Output / safety limits (profile)
+  { id: 4,  name: "SpeedLimiterFadeBand",        min: 0.0, max: 500.0 },
 
-  { id: 4,  name: "RearFadeSpeed0",        min: 0.0, max: 500.0 },
-  { id: 5,  name: "RearFadeSpeed1",        min: 0.0, max: 500.0 },
-  { id: 6,  name: "RearFadeThrottle0",     min: 0.0, max: 1.0 },
-  { id: 7,  name: "RearFadeThrottle1",     min: 0.0, max: 1.0 },
+  // ----- Steering torques
+  { id: 5,  name: "MaxTorquePerTick",            min: 0.0, max: 500.0 },
 
-  { id: 8,  name: "SteerTorqueFront",      min: 0.0, max: 1000.0 },
-  { id: 9,  name: "SteerTorqueRear",       min: 0.0, max: 1000.0 },
+  { id: 6,  name: "SteerTorqueFront",            min: 0.0, max: 1000.0 },
+  { id: 7,  name: "SteerTorqueRear",             min: 0.0, max: 1000.0 },
 
-  { id: 10, name: "SlipRatio",             min: 0.0, max: 1.0 },
-  { id: 11, name: "SlipDownFactor",        min: 0.0, max: 1.0 },
-  { id: 12, name: "SlipMinTorque",         min: 10.0, max: 500.0 },
-  { id: 13, name: "SlipRecoverPerTick",    min: 0.0, max: 1.0 },
-  { id: 14, name: "SlipSpeedEps",          min: 0.0, max: 500.0 },
+  { id: 8,  name: "SteerTorqueLowFactor",        min: 0.0, max: 2.0 },
+  { id: 9,  name: "SteerTorqueHighFactor",       min: 0.0, max: 2.0 },
+  { id: 10, name: "SteerTorqueHighSpeed",        min: 0.0, max: 2000.0 },
 
-  { id: 15, name: "DriveFrontShareLow",    min: 0.0, max: 1.0 },
-  { id: 16, name: "DriveFrontShareHigh",   min: 0.0, max: 1.0 },
-  { id: 17, name: "BrakeFrontShareLow",    min: 0.0, max: 1.0 },
-  { id: 18, name: "BrakeFrontShareHigh",   min: 0.0, max: 1.0 },
-  { id: 19, name: "BiasHighThrottle",      min: 0.0, max: 5.0 },
+  { id: 11, name: "RearFadeSpeed0",              min: 0.0, max: 2000.0 },
+  { id: 12, name: "RearFadeSpeed1",              min: 0.0, max: 2000.0 },
+  { id: 13, name: "RearFadeTorque0",             min: 0.0, max: 1000.0 },
+  { id: 14, name: "RearFadeTorque1",             min: 0.0, max: 1000.0 },
+
+  // ----- Traction / ABS
+  { id: 15, name: "SlipRatio",                   min: 0.0, max: 1.0 },
+  { id: 16, name: "SlipDownFactor",              min: 0.0, max: 1.0 },
+  { id: 17, name: "SlipMinTorque",               min: 0.0, max: 500.0 },
+  { id: 18, name: "SlipRecoverTorquePerTick",    min: 0.0, max: 500.0 },
+  { id: 19, name: "SlipSpeedEps",                min: 0.0, max: 500.0 },
+  { id: 20, name: "maxRealisticAccel",           min: 0.0, max: 500.0 },
+  { id: 21, name: "maxRealisticDecel",           min: 0.0, max: 500.0 },
+
+  // ----- Front/rear bias
+  { id: 22, name: "DriveFrontShareLow",          min: 0.0, max: 1.0 },
+  { id: 23, name: "DriveFrontShareHigh",         min: 0.0, max: 1.0 },
+  { id: 24, name: "BrakeFrontShareLow",          min: 0.0, max: 1.0 },
+  { id: 25, name: "BrakeFrontShareHigh",         min: 0.0, max: 1.0 },
+  { id: 26, name: "FrontRearBiasFullTorqueDrive",min: 0.0, max: 1000.0 },
+  { id: 27, name: "FrontRearBiasFullTorqueBrake",min: 0.0, max: 1000.0 },
+
+  // ----- Braking near standstill
+  { id: 28, name: "AntiReversingSpeed",          min: 0.0, max: 500.0 },
 ];
+
+// Persist last values locally so the input is populated when switching params.
+// Last (and initial) values shown/sent per param id.
+// Initialized from the C++ TVParams defaults so the UI matches firmware at first load.
+const tuningLast = {
+  // profile
+  4:  30.0,  // SpeedLimiterFadeBand
+
+  // steering
+  5:  50.0,  // MaxTorquePerTick
+  6:  220.0, // SteerTorqueFront
+  7:  260.0, // SteerTorqueRear
+  8:  1.0,   // SteerTorqueLowFactor
+  9:  0.7,   // SteerTorqueHighFactor
+  10: 30.0,  // SteerTorqueHighSpeed
+  11: 15.0,  // RearFadeSpeed0
+  12: 30.0,  // RearFadeSpeed1
+  13: 50.0,  // RearFadeTorque0
+  14: 150.0, // RearFadeTorque1
+
+  // traction / abs
+  15: 0.20,  // SlipRatio
+  16: 0.70,  // SlipDownFactor
+  17: 50.0,  // SlipMinTorque
+  18: 50.0,  // SlipRecoverTorquePerTick
+  19: 20.0,  // SlipSpeedEps
+  20: 30.0,  // maxRealisticAccel
+  21: 40.0,  // maxRealisticDecel
+
+  // bias
+  22: 0.55,  // DriveFrontShareLow
+  23: 0.30,  // DriveFrontShareHigh
+  24: 0.60,  // BrakeFrontShareLow
+  25: 0.80,  // BrakeFrontShareHigh
+  26: 150.0, // FrontRearBiasFullTorqueDrive
+  27: 300.0, // FrontRearBiasFullTorqueBrake
+
+  // braking near standstill
+  28: 100.0, // AntiReversingSpeed
+};
 
 const tuneKeyEl    = document.getElementById("tune_key");
 const tuneValueEl  = document.getElementById("tune_value");
@@ -212,35 +265,7 @@ const tuneSliderEl = document.getElementById("tune_slider");
 const tuneMinMaxEl = document.getElementById("tune_minmax");
 const btnSendTune  = document.getElementById("btn_send_tune");
 
-// Persist last values locally so the input is populated when switching params.
-// Last (and initial) values shown/sent per param id.
-// Initialized from the C++ TVParams defaults so the UI matches firmware at first load.
-const tuningLast = {
-  0:  0.5,   // MaxTorquePerTick
-  1:  1.0,   // SteerTorqueLowFactor
-  2:  0.7,   // SteerTorqueHighFactor
-  3:  30.0,  // SteerTorqueHighSpeed
 
-  4:  15.0,  // RearFadeSpeed0
-  5:  30.0,  // RearFadeSpeed1
-  6:  0.05,  // RearFadeThrottle0
-  7:  0.3,   // RearFadeThrottle1
-
-  8:  220.0, // SteerTorqueFront
-  9:  260.0, // SteerTorqueRear
-
-  10: 0.20,  // SlipRatio
-  11: 0.70,  // SlipDownFactor
-  12: 50.0,  // SlipMinTorque
-  13: 0.20,  // SlipRecoverPerTick
-  14: 20.0,  // SlipSpeedEps
-
-  15: 0.55,  // DriveFrontShareLow
-  16: 0.30,  // DriveFrontShareHigh
-  17: 0.60,  // BrakeFrontShareLow
-  18: 0.80,  // BrakeFrontShareHigh
-  19: 0.60,  // BiasHighThrottle
-};
 
 function fmt3(x){
   const n = Number(x);

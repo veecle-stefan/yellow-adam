@@ -135,21 +135,15 @@ TorqueVectoring::SenseData TorqueVectoring::Sense(const TickContext &ctx, Gear c
     }
 
     const float dv = v_ref_meas - m_vehicleSpeedAbs;
-
-    const bool plausible =
-        (dv <= ctx.params->TV.maxRealisticAccel) &&
-        (dv >= -ctx.params->TV.maxRealisticDecel);
-
-    if (plausible)
-    {
+    if (dv > ctx.params->TV.maxRealisticAccel) {
+        m_vehicleSpeedAbs += ctx.params->TV.maxRealisticAccel; // acceleration unrealistic, slowly move towards speed
+    } else if (dv < -ctx.params->TV.maxRealisticDecel) {
+        m_vehicleSpeedAbs -= ctx.params->TV.maxRealisticDecel; // deceleration unrealistic, slowly move towards speed
+    } else {
         // Accept measurement (no smoothing; we already did robust selection)
         m_vehicleSpeedAbs = v_ref_meas;
     }
-    else
-    {
-        // Reject outlier: keep previous vehicle speed estimate
-        // do NOT converge toward a known-bad value
-    }
+    
 
     // Output for this tick
     sd.vehicleSpeedAbs = m_vehicleSpeedAbs;
@@ -158,8 +152,8 @@ TorqueVectoring::SenseData TorqueVectoring::Sense(const TickContext &ctx, Gear c
     // =========================
     // ASR/ABS torque envelopes per wheel (persistent, updated each tick)
     // =========================
-    const float maxDrive = static_cast<float>(ctx.params->TV.maxPowerDrive);
-    const float maxBrake = static_cast<float>(ctx.params->TV.maxPowerBrake); // magnitude
+    const float maxDrive = static_cast<float>(ctx.params->TV.maxTorqueDrive);
+    const float maxBrake = static_cast<float>(ctx.params->TV.maxTorqueBrake); // magnitude
 
     if (!m_capsInit)
     {
@@ -408,14 +402,15 @@ TorqueVectoring::Torques TorqueVectoring::Compute(const TickContext& ctx, const 
 
     // ========= Stage 0: Sense (vehicle speed + caps) =========
     const SenseData sense = Sense(ctx, currGear);
+    out.vehicleSpeedAbs = sense.vehicleSpeedAbs;
     const float vRefAbs = sense.vehicleSpeedAbs;
 
     // ========= Stage 1: Normalize user inputs =========
     const float s = static_cast<float>(ctx.user.steering) / 1000.0f;   // convention: -left, +right
     const float absS = std::fabs(s);
 
-    const float maxDrive = static_cast<float>(TV.maxPowerDrive);
-    const float maxBrake = static_cast<float>(TV.maxPowerBrake);
+    const float maxDrive = static_cast<float>(TV.maxTorqueDrive);
+    const float maxBrake = static_cast<float>(TV.maxTorqueBrake);
 
     // requested magnitude in "torque units"
     const float maxT = (ctx.user.throttle >= 0) ? maxDrive : maxBrake;
@@ -448,11 +443,16 @@ TorqueVectoring::Torques TorqueVectoring::Compute(const TickContext& ctx, const 
         Tc_total_req = (-motionSign) * bmag * brakeScale;
     }
 
-    // front/rear bias based on |Tc_total|
+    // front/rear bias based on |Tc_total_req| (absolute torque ramp)
     const float TcAbs = std::fabs(Tc_total_req);
-    const float normMax = (Tc_total_req >= 0.f) ? maxDrive : maxBrake;
 
-    float uBias = (TV.BiasHighThrottle * normMax > 1e-6f) ? (TcAbs / (TV.BiasHighThrottle * normMax)) : 1.f;
+    // Pick ramp end-point depending on drive vs brake
+    const float full = (Tc_total_req >= 0.f)
+                           ? TV.FrontRearBiasFullTorqueDrive
+                           : TV.FrontRearBiasFullTorqueBrake;
+
+    // uBias in [0..1]
+    float uBias = (full > 1e-6f) ? (TcAbs / full) : 1.f;
     uBias = std::clamp(uBias, 0.f, 1.f);
 
     float frontShare = 0.5f;
@@ -507,8 +507,8 @@ TorqueVectoring::Torques TorqueVectoring::Compute(const TickContext& ctx, const 
         }
 
         const float rearEffAbs = std::fabs(TcR_req);
-        const float t0 = TV.RearFadeThrottle0 * normMax;
-        const float t1 = TV.RearFadeThrottle1 * normMax;
+        const float t0 = TV.RearFadeTorque0;
+        const float t1 = TV.RearFadeTorque1;
 
         float uLong = 1.f;
         if (t1 > t0) {
@@ -588,15 +588,10 @@ TorqueVectoring::Torques TorqueVectoring::Compute(const TickContext& ctx, const 
             const float d = wheel[i] - m_lastWheelCmd[i];
             if (d >  TV.MaxTorquePerTick) wheel[i] = m_lastWheelCmd[i] + TV.MaxTorquePerTick;
             if (d < -TV.MaxTorquePerTick) wheel[i] = m_lastWheelCmd[i] - TV.MaxTorquePerTick;
+            wheel[i] = std::clamp(wheel[i], sense.capNeg[i], sense.capPos[i]);
+            wheel[i] = std::clamp(wheel[i], -maxBrake, +maxDrive);
             m_lastWheelCmd[i] = wheel[i];
         }
-    }
-
-    // ========= Stage 6: Final clamp to caps + physical limits =========
-    for (int i = 0; i < 4; ++i)
-    {
-        wheel[i] = std::clamp(wheel[i], sense.capNeg[i], sense.capPos[i]);
-        wheel[i] = std::clamp(wheel[i], -maxBrake, +maxDrive);
     }
 
     out.fl = static_cast<int16_t>(wheel[FL]);

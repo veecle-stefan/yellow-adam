@@ -36,121 +36,114 @@ struct DriveParams
     // -----------------------------------------------------------------------------
     struct TVParams
     {
-        // Maximum allowed change of steering-related torque per control tick,
-        // expressed as a absolute torque.
-        // Limits how fast torque steer / yaw assist can ramp to avoid mechanical shocks.
-        // Default: 50
-        float MaxTorquePerTick = 50.f;
+        // =========================================================================
+        // Output / safety limits (profile)
+        // =========================================================================
 
-        // Front axle steering torque gain at standstill / very low speed.
-        // Used to overcome rack centering spring and static friction.
-        // Default: 1.0
-        float SteerTorqueLowFactor = 1.f;
+        // Absolute max commanded drive torque (+) per wheel (before envelopes).
+        // Units: torque command units.
+        float maxTorqueDrive = 250.f;
 
-        // Front axle steering torque gain at higher vehicle speeds.
-        // Reduced on purpose to avoid twitchy steering and oscillations.
-        // Default: 0.5
-        float SteerTorqueHighFactor = 0.7f;
+        // Absolute max commanded brake torque magnitude (|−|) per wheel (before envelopes).
+        // Units: torque command units. (Negative torques are braking.)
+        float maxTorqueBrake = 600.f;
 
-        // Speed at which SteerTorqueHighFactor is fully reached.
-        // Below this, steering gain interpolates linearly between Low and High factors.
-        // Default: 50.0
-        float SteerTorqueHighSpeed = 30.f;
-
-        // Rear axle yaw assist fade-in based on vehicle speed.
-        // Below RearFadeSpeed0: rear yaw assist disabled (standstill / noise region).
-        // Default: 15.0
-        float RearFadeSpeed0 = 15.f;
-
-        // Above RearFadeSpeed1: rear yaw assist fully enabled.
-        // Between Speed0 and Speed1, effect ramps in linearly.
-        // Default: 30.0
-        float RearFadeSpeed1 = 30.f;
-
-        // Rear axle yaw assist fade-in based on longitudinal driver intent (throttle or brake),
-        // expressed as fraction of MaxOutputLimit.
-        // Below this: rear yaw assist disabled to avoid jitter at zero throttle.
-        // Default: 0.05
-        float RearFadeThrottle0 = 0.05f;
-
-        // Above this throttle/brake magnitude: rear yaw assist fully enabled.
-        // Between Throttle0 and Throttle1, effect ramps in linearly.
-        // Default: 0.30
-        float RearFadeThrottle1 = 0.3f;
-
-        // Maximum differential steering torque applied on the front axle.
-        // Primary steering actuator (torque steer) for your rack.
-        // Default: 250.0
-        float SteerTorqueFront = 220.f;
-
-        // Maximum yaw-assist differential torque applied on the rear axle.
-        // Stabilizes / assists turning but is NOT a steering actuator.
-        // Default: 200.0
-        float SteerTorqueRear = 260.f;
-
-        // -------------------------------------------------------------------------
-        // ABS / ASR – very simple reactive slip control (per-wheel scaling)
-        // -------------------------------------------------------------------------
-
-        // Relative speed deviation threshold to detect slip. Example: 0.20 = 20%.
-        // ASR: wheel spins > +SlipRatio faster than reference under positive torque.
-        // ABS: wheel slows > -SlipRatio slower than reference under negative torque.
-        // Default: 0.20
-        float SlipRatio = 0.20f;
-
-        // Multiplicative torque reduction applied when slip is detected.
-        // Repeated slip compounds (e.g. 0.7^n).
-        // Default: 0.70
-        float SlipDownFactor = 0.70f;
-
-        // Lower bound for slip scaling (never reduce below this).
-        // Prevents permanent "torque = 0" and allows recovery.
-        // Default: 50 (absolute torque value)
-        float SlipMinTorque = 50.f;
-
-        // Recovery rate per tick when no slip is detected (towards 1.0).
-        // Default: 0.10
-        float SlipRecoverTorquePerTick = 50.f;
-
-        // Minimum reference speed to activate slip detection (noise floor).
-        // Default: 10.0
-        float SlipSpeedEps = 20.f;
-
-        // -------------------------------------------------------------------------
-        // Axle torque bias (load transfer compensation)
-        // -------------------------------------------------------------------------
-
-        // Under acceleration: front share ramps from Low -> High as |throttle| increases.
-        // Default: 0.55 -> 0.30 (more rear at hard accel)
-        float DriveFrontShareLow = 0.55f;
-        float DriveFrontShareHigh = 0.30f;
-
-        // Under braking: front share ramps from Low -> High as |brake| increases.
-        // Default: 0.60 -> 0.80 (more front at hard brake)
-        float BrakeFrontShareLow = 0.60f;
-        float BrakeFrontShareHigh = 0.80f;
-
-        // Normalization point for the ramp above (fraction of max torque).
-        // a = clamp(|throttle| / (BiasHighThrottle * MaxOutputLimit), 0..1)
-        // Default: 0.6
-        float BiasHighThrottle = 0.6f;
-
-        // Speed limiter fade band (soft region to avoid harsh clamp).
-        // Default: 30.0
-        float SpeedLimiterFadeBand = 30.f;
-        // "Anti-reversing" speed threshold (feedback speed units).
-        // Used to fade braking torque to zero as |speed| approaches 0 to avoid reversing.
-        // Default: 100 (speed units from feedback)
-        float AntiReversingSpeed = 100.f;
-
+        // Max allowed vehicle speed in forward / reverse (wheel-speed units).
         float maxSpeedFwd = 100.f;
         float maxSpeedRev = 60.f;
-        float maxPowerDrive = 250.f;
-        float maxPowerBrake = 600.f;
 
+        // Soft fade band below maxSpeed* where speed limiting starts (wheel-speed units).
+        // Example: maxSpeedRev=60, FadeBand=30 => start fading at 30..60.
+        float SpeedLimiterFadeBand = 30.f;
+
+        // =========================================================================
+        // Steering torques (front torque-steer + rear yaw assist)
+        // =========================================================================
+
+        // Max allowed change (delta) of steering-related differential torque per tick.
+        // Units: torque command units per control tick.
+        float MaxTorquePerTick = 50.f;
+
+        // Front axle differential torque limit (primary steering actuator).
+        // Convention (your codebase): s>0 (right) => more torque on FL, opposing on FR.
+        float SteerTorqueFront = 220.f;
+
+        // Rear axle differential torque limit (yaw assist, not primary steering).
+        float SteerTorqueRear = 260.f;
+
+        // Steering gain at very low speed (rack stiction / centering spring).
+        float SteerTorqueLowFactor = 1.f;
+
+        // Steering gain at higher speed (reduce twitchiness).
+        float SteerTorqueHighFactor = 0.7f;
+
+        // Vehicle speed where HighFactor is fully reached (wheel-speed units).
+        float SteerTorqueHighSpeed = 30.f;
+
+        // Rear yaw assist fade-in by speed: below Speed0 off, above Speed1 full.
+        float RearFadeSpeed0 = 15.f;
+        float RearFadeSpeed1 = 30.f;
+
+        // Rear yaw assist fade-in by longitudinal DRIVE torque request magnitude.
+        // Units: torque command units (applied to |Tc_rear_req| / |Tc_total_req| logic depending on your implementation).
+        float RearFadeTorque0 = 50.f;
+        float RearFadeTorque1 = 150.f;
+
+        // =========================================================================
+        // Traction / ABS (per-wheel envelopes)
+        // =========================================================================
+
+        // Relative speed deviation threshold for slip detection (ratio).
+        // Drive slip: wheel > vRef*(1+SlipRatio) under + torque.
+        // Brake slip: wheel < vRef*(1−SlipRatio) under − torque.
+        float SlipRatio = 0.20f;
+
+        // Multiplicative envelope tightening when slip is detected.
+        // capPos *= SlipDownFactor, capNeg *= SlipDownFactor (brake moves toward 0).
+        float SlipDownFactor = 0.70f;
+
+        // Minimum magnitude the envelope is allowed to shrink to.
+        // Units: torque command units. (capPos >= SlipMinTorque, capNeg <= −SlipMinTorque)
+        float SlipMinTorque = 50.f;
+
+        // Absolute recovery added per tick when NOT slipping (toward live max limits).
+        // Units: torque command units per tick.
+        float SlipRecoverTorquePerTick = 50.f;
+
+        // Minimum reference speed needed to use ratio-based slip detection (noise floor).
+        // Units: wheel-speed units.
+        float SlipSpeedEps = 20.f;
+
+        // Maximum plausible change in the estimated vehicle speed per tick.
+        // Units: wheel-speed units per tick. Used to reject outliers (“teleporting”).
         float maxRealisticAccel = 30.f;
         float maxRealisticDecel = 40.f;
 
+        // =========================================================================
+        // Front/rear torque bias (load transfer compensation)
+        // =========================================================================
+
+        // Front axle share under DRIVE: ramps from Low -> High as |Tc_total_req| increases.
+        // (Low torque = more front, high torque = more rear) depending on chosen defaults.
+        float DriveFrontShareLow = 0.55f;
+        float DriveFrontShareHigh = 0.30f;
+
+        // Front axle share under BRAKE: ramps from Low -> High as |Tc_total_req| increases.
+        float BrakeFrontShareLow = 0.60f;
+        float BrakeFrontShareHigh = 0.80f;
+
+        // Torque magnitude where the front/rear share reaches the “High” setting (uBias=1).
+        // Units: torque command units. Separate knobs because drive/brake ranges differ a lot.
+        float FrontRearBiasFullTorqueDrive = 150.f;
+        float FrontRearBiasFullTorqueBrake = 300.f;
+
+        // =========================================================================
+        // Braking near standstill (anti-reversing)
+        // =========================================================================
+
+        // Fade braking torque to zero as |wheel speed| approaches 0 to avoid reversing a stopped wheel.
+        // Units: wheel-speed units. (Used by brakeScale = |w|/AntiReversingSpeed, clamped 0..1)
+        float AntiReversingSpeed = 100.f;
     } TV;
 
     // Convenience: constexpr-like default instance (still mutable at runtime).

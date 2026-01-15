@@ -20,46 +20,52 @@ window.timeScaling = 5;
 
 const params = {
   TV: {
-    MaxTorquePerTick: 0.5,
+    // Output / safety limits
+    maxTorqueDrive: 250.0,
+    maxTorqueBrake: 600.0,
+
+    maxSpeedFwd: 100.0,
+    maxSpeedRev: 60.0,
+    SpeedLimiterFadeBand: 30.0,
+
+    // Steering torques
+    MaxTorquePerTick: 50.0,
+
+    SteerTorqueFront: 220.0,
+    SteerTorqueRear: 260.0,
     SteerTorqueLowFactor: 1.0,
     SteerTorqueHighFactor: 0.7,
     SteerTorqueHighSpeed: 30.0,
+
     RearFadeSpeed0: 15.0,
     RearFadeSpeed1: 30.0,
-    RearFadeThrottle0: 0.05,
-    RearFadeThrottle1: 0.3,
-    SteerTorqueFront: 220.0,
-    SteerTorqueRear: 260.0,
+    RearFadeTorque0: 50.0,
+    RearFadeTorque1: 150.0,
 
+    // Traction / ABS envelopes
     SlipRatio: 0.2,
-    SlipDownFactor: 0.5,
+    SlipDownFactor: 0.7,
 
-    // --- NEW (needed by the new C++ port) ---
-    SlipRecoverTorquePerTick: 30, // VERIFY DEFAULT: C++ TV.SlipRecoverTorquePerTick (torque units per 20ms)
-    SlipMinTorque: 50.0, // VERIFY DEFAULT: C++ TV.SlipMinTorque (minimum allowed |torque| envelope)
-    maxRealisticAccel: 50.0, // VERIFY DEFAULT: C++ TV.maxRealisticAccel (max +ΔvRefAbs per tick)
-    maxRealisticDecel: 80.0, // VERIFY DEFAULT: C++ TV.maxRealisticDecel (max -ΔvRefAbs per tick)
+    SlipMinTorque: 50.0,
+    SlipRecoverTorquePerTick: 50.0,
 
     SlipSpeedEps: 20.0,
+    maxRealisticAccel: 30.0,
+    maxRealisticDecel: 40.0,
 
+    // Front/rear torque bias
     DriveFrontShareLow: 0.55,
-    DriveFrontShareHigh: 0.3,
-    BrakeFrontShareLow: 0.6,
-    BrakeFrontShareHigh: 0.8,
-    BiasHighThrottle: 0.6,
+    DriveFrontShareHigh: 0.30,
+    BrakeFrontShareLow: 0.60,
+    BrakeFrontShareHigh: 0.80,
 
-    // --- naming used by new C++ port (aliases to your existing fields) ---
-    maxPowerDrive: 400, // VERIFY DEFAULT: C++ TV.maxPowerDrive (positive limit)
-    maxPowerBrake: 600, // VERIFY DEFAULT: C++ TV.maxPowerBrake (brake magnitude)
+    FrontRearBiasFullTorqueDrive: 150.0,
+    FrontRearBiasFullTorqueBrake: 300.0,
 
-    maxSpeedForward: 400,
-    maxSpeedReverse: 60,
-    SpeedLimiterFadeBand: 30.0,
-
+    // Braking near standstill
     AntiReversingSpeed: 100.0,
   },
 };
-
 // currGear: 0=N,1=D,2=R
 // lastFront/lastRear: { receivedTorqueL, receivedTorqueR, rpmL, rpmR }
 // Helpers: clamp(x,lo,hi), Torques(fl,fr,rl,rr), Gear
@@ -81,50 +87,34 @@ const params = {
 // - You already have helpers: clamp(x,lo,hi), Torques(fl,fr,rl,rr), Gear
 
 function TorqueVectoring(currGear, t, s, lastFront, lastRear) {
-  // ---------------------------
-  // Persistent "class" state
-  // ---------------------------
+  // Persistent state (mirrors the C++ members)
   const st =
     TorqueVectoring._st ||
     (TorqueVectoring._st = {
-      vehicleSpeedAbs: 0,
-
+      vehicleSpeedAbs: 0.0,
       capsInit: false,
       capPos: [0, 0, 0, 0],
       capNeg: [0, 0, 0, 0],
-
-      lastWheelCmd: [0, 0, 0, 0], // optional final rate-limit memory
+      lastWheelCmd: [0, 0, 0, 0],
     });
 
-  // ---------------------------
-  // Constants / enums
-  // ---------------------------
-  const FL = 0,
-    FR = 1,
-    RL = 2,
-    RR = 3;
+  const TV = params.TV;
+  const FL = 0, FR = 1, RL = 2, RR = 3;
 
-  // ---------------------------
-  // Small helpers
-  // ---------------------------
+  // ---------- helpers ----------
   const absf = (x) => (x >= 0 ? x : -x);
-  const signf = (x) => (x > 0 ? 1 : x < 0 ? -1 : 0);
   const clampF = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
   const lerp = (a, b, u) => a + (b - a) * u;
-
   const truncTowardZero = (x) => (x < 0 ? Math.ceil(x) : Math.floor(x));
 
-  // sortSmallN + median as in C++
   const sortSmallN = (arr, n) => {
-    for (let i = 0; i < n; i++) {
-      for (let j = i + 1; j < n; j++) {
+    for (let i = 0; i < n; i++)
+      for (let j = i + 1; j < n; j++)
         if (arr[j] < arr[i]) {
           const tmp = arr[i];
           arr[i] = arr[j];
           arr[j] = tmp;
         }
-      }
-    }
   };
 
   const medianSorted = (sorted, n) => {
@@ -136,8 +126,7 @@ function TorqueVectoring(currGear, t, s, lastFront, lastRear) {
   };
 
   const axleSpeedAbs = (sense, L, R) => {
-    const okL = sense.ok[L],
-      okR = sense.ok[R];
+    const okL = sense.ok[L], okR = sense.ok[R];
     if (okL && okR) return 0.5 * (sense.wAbs[L] + sense.wAbs[R]);
     if (okL) return sense.wAbs[L];
     if (okR) return sense.wAbs[R];
@@ -158,7 +147,6 @@ function TorqueVectoring(currGear, t, s, lastFront, lastRear) {
     return best;
   };
 
-  // SolvePairCaps from C++ (priority: keep Td)
   const solvePairCaps = (TcReq, TdReq, capNegL, capPosL, capNegR, capPosR) => {
     const TdMin = 0.5 * (capNegL - capPosR);
     const TdMax = 0.5 * (capPosL - capNegR);
@@ -169,40 +157,34 @@ function TorqueVectoring(currGear, t, s, lastFront, lastRear) {
     const Tc = clampF(TcReq, TcMin, TcMax);
 
     return {
-      Tc,
-      Td,
-      TcMin,
-      TcMax,
+      Tc, Td,
+      TcMin, TcMax,
       L: Tc + Td,
       R: Tc - Td,
     };
   };
 
-  // ---------------------------
-  // Stage 0: Sense() (speeds + robust vRefAbs + per-wheel torque caps)
-  // ---------------------------
+  // ---------- Stage 0: Sense() ----------
   const Sense = () => {
-    const TV = params.TV;
-
     const sense = {
       ok: [false, false, false, false],
-      w: [0, 0, 0, 0], // signed wheel speeds
-      wAbs: [0, 0, 0, 0], // abs wheel speeds
+      w: [0, 0, 0, 0],    // signed
+      wAbs: [0, 0, 0, 0], // abs
       vehicleSpeedAbs: 0,
       capPos: [0, 0, 0, 0],
       capNeg: [0, 0, 0, 0],
     };
 
-    // In your JS signature, lastFront/lastRear are the "current" samples.
+    // In your JS signature, lastFront/lastRear are the current samples for this tick.
     const frontOk = !!lastFront;
     const rearOk = !!lastRear;
 
     sense.ok[FL] = sense.ok[FR] = frontOk;
     sense.ok[RL] = sense.ok[RR] = rearOk;
 
-    const getSpeed = (axleObj, left) => {
-      if (!axleObj) return 0;
-      return left ? +axleObj.rpmL : +axleObj.rpmR;
+    const getSpeed = (axle, left) => {
+      if (!axle) return 0;
+      return left ? +axle.rpmL : +axle.rpmR;
     };
 
     sense.w[FL] = getSpeed(lastFront, true);
@@ -210,33 +192,30 @@ function TorqueVectoring(currGear, t, s, lastFront, lastRear) {
     sense.w[RL] = getSpeed(lastRear, true);
     sense.w[RR] = getSpeed(lastRear, false);
 
+    // abs speeds
     for (let i = 0; i < 4; i++) sense.wAbs[i] = absf(sense.w[i]);
 
-    // collect valid abs speeds
+    // gather valid abs speeds
     const sorted = [0, 0, 0, 0];
     let n = 0;
     for (let i = 0; i < 4; i++) {
-      if (sense.ok[i]) {
-        sorted[n] = sense.wAbs[i];
-        n++;
-      }
+      if (sense.ok[i]) sorted[n++] = sense.wAbs[i];
     }
     sortSmallN(sorted, n);
 
-    const accel = t > 0;
-    const brake = t < 0;
-    const coast = !accel && !brake;
+    const accel = (t > 0);
+    const brake = (t < 0);
 
-    // robust measured reference v_ref_meas (abs)
+    // robust v_ref_meas (abs)
     let v_ref_meas = 0;
     if (n === 0) {
       v_ref_meas = 0;
     } else if (accel) {
-      v_ref_meas = n >= 2 ? sorted[1] : sorted[0]; // 2nd smallest
+      v_ref_meas = (n >= 2) ? sorted[1] : sorted[0];          // 2nd smallest
     } else if (brake) {
-      v_ref_meas = n >= 2 ? sorted[n - 2] : sorted[n - 1]; // 2nd largest
+      v_ref_meas = (n >= 2) ? sorted[n - 2] : sorted[n - 1];  // 2nd largest
     } else {
-      v_ref_meas = medianSorted(sorted, n); // median
+      v_ref_meas = medianSorted(sorted, n);                   // median
     }
 
     // standstill handling
@@ -251,18 +230,17 @@ function TorqueVectoring(currGear, t, s, lastFront, lastRear) {
       }
     }
 
+    // plausibility gate (hard reject)
     const dv = v_ref_meas - st.vehicleSpeedAbs;
-    const plausible = dv <= TV.maxRealisticAccel && dv >= -TV.maxRealisticDecel;
-
-    if (plausible) {
-      st.vehicleSpeedAbs = v_ref_meas;
-    } // else: reject
+    if (dv > TV.maxRealisticAccel) st.vehicleSpeedAbs += TV.maxRealisticAccel;
+    else if (dv < -TV.maxRealisticDecel) st.vehicleSpeedAbs -= TV.maxRealisticDecel;
+      else st.vehicleSpeedAbs = v_ref_meas;
 
     sense.vehicleSpeedAbs = st.vehicleSpeedAbs;
 
-    // --------- caps update (ASR/ABS envelope) ----------
-    const maxDrive = +TV.maxPowerDrive;
-    const maxBrake = +TV.maxPowerBrake; // magnitude
+    // ----- envelopes (ASR/ABS) -----
+    const maxDrive = +TV.maxTorqueDrive;
+    const maxBrake = +TV.maxTorqueBrake; // magnitude
 
     if (!st.capsInit) {
       for (let i = 0; i < 4; i++) {
@@ -272,12 +250,9 @@ function TorqueVectoring(currGear, t, s, lastFront, lastRear) {
       st.capsInit = true;
     }
 
-    // Pull last issued torque commands from feedback (same sample)
-    const getLastTorque = (axleObj, left) => {
-      if (!axleObj) return 0;
-      return left
-        ? +(axleObj.receivedTorqueL ?? 0)
-        : +(axleObj.receivedTorqueR ?? 0);
+    const getLastTorque = (axle, left) => {
+      if (!axle) return 0;
+      return left ? +(axle.receivedTorqueL ?? 0) : +(axle.receivedTorqueR ?? 0);
     };
 
     const cmd = [
@@ -294,7 +269,7 @@ function TorqueVectoring(currGear, t, s, lastFront, lastRear) {
     const recover = TV.SlipRecoverTorquePerTick;
     const minT = TV.SlipMinTorque;
 
-    // recovery every tick toward current live limits
+    // Recovery every tick
     for (let i = 0; i < 4; i++) {
       st.capPos[i] += recover;
       if (st.capPos[i] > maxDrive) st.capPos[i] = maxDrive;
@@ -305,8 +280,9 @@ function TorqueVectoring(currGear, t, s, lastFront, lastRear) {
       if (st.capNeg[i] > -minT) st.capNeg[i] = -minT;
     }
 
-    const hasAnchor = n > 0 && sorted[0] < vEps;
+    const hasAnchor = (n > 0) && (sorted[0] < vEps);
 
+    // Slip detection + tighten
     for (let i = 0; i < 4; i++) {
       const wi = sense.wAbs[i];
       const ci = cmd[i];
@@ -317,9 +293,6 @@ function TorqueVectoring(currGear, t, s, lastFront, lastRear) {
       if (vRef < vEps) {
         if (hasAnchor) {
           if (ci > +minT && wi > vEps) slipDrive = true;
-          slipBrake = false;
-        } else {
-          slipDrive = false;
           slipBrake = false;
         }
       } else {
@@ -335,46 +308,77 @@ function TorqueVectoring(currGear, t, s, lastFront, lastRear) {
         if (st.capPos[i] < minT) st.capPos[i] = minT;
       }
       if (slipBrake) {
-        st.capNeg[i] *= down; // negative -> closer to 0
+        st.capNeg[i] *= down;
         if (st.capNeg[i] > -minT) st.capNeg[i] = -minT;
       }
     }
 
-    // output caps for THIS tick (clamped to live physical limits)
+    // publish caps for this tick (clamped)
     for (let i = 0; i < 4; i++) {
       sense.capPos[i] = clampF(st.capPos[i], minT, maxDrive);
       sense.capNeg[i] = clampF(st.capNeg[i], -maxBrake, -minT);
     }
 
+    // ----- Speed limiter as envelope modifier (NEW) -----
+    const band = TV.SpeedLimiterFadeBand;
+    if (band > 1e-3) {
+      const vRefAbs = sense.vehicleSpeedAbs;
+
+      const vMax = (currGear === Gear.D) ? TV.maxSpeedFwd : TV.maxSpeedRev;
+      const vStart = vMax - band;
+
+      const hiOutlier = vRefAbs * (1 + TV.SlipRatio);
+      const vEps2 = TV.SlipSpeedEps;
+      const minT2 = TV.SlipMinTorque;
+
+      const capFromSpeed = (vForCap) => {
+        if (vForCap <= vStart) return maxDrive;
+        if (vForCap >= vMax) return 0.0;
+        const u = (vForCap - vStart) / band; // 0..1
+        return maxDrive * (1.0 - clampF(u, 0.0, 1.0));
+      };
+
+      for (let i = 0; i < 4; i++) {
+        let vForCap = vRefAbs;
+        const wi = sense.wAbs[i];
+
+        if (vRefAbs > vEps2) {
+          if (wi > hiOutlier && wi > vStart) vForCap = wi;
+        }
+
+        const capTarget = capFromSpeed(vForCap);
+
+        if (sense.capPos[i] > capTarget) sense.capPos[i] = capTarget;
+
+        // keep invariant
+        if (sense.capPos[i] < minT2) sense.capPos[i] = minT2;
+      }
+    }
+
     return sense;
   };
 
-  // ---------------------------
-  // Compute()
-  // ---------------------------
-  if (currGear === Gear.N || !params || !params.TV) return Torques(0, 0, 0, 0);
+  // ---------- Compute() ----------
+  if (currGear === Gear.N) return Torques(0, 0, 0, 0);
 
-  const TV = params.TV;
-
-  // Stage 0
   const sense = Sense();
   const vRefAbs = sense.vehicleSpeedAbs;
 
-  // Stage 1: normalize user inputs
-  const sNorm = clampF(s / 1000.0, -1.0, +1.0); // convention: -left, +right
+  // normalize steering
+  const sNorm = clampF(s / 1000.0, -1.0, +1.0);
   const absS = absf(sNorm);
 
-  const maxDrive = +TV.maxPowerDrive;
-  const maxBrake = +TV.maxPowerBrake;
+  const maxDrive = +TV.maxTorqueDrive;
+  const maxBrake = +TV.maxTorqueBrake;
 
   // requested magnitude in torque units
-  const maxT = t >= 0 ? maxDrive : maxBrake;
+  const maxT = (t >= 0) ? maxDrive : maxBrake;
   const throttleInput = (t * maxT) / 1000.0;
 
-  const gearSign = currGear === Gear.D ? +1.0 : -1.0;
+  const gearSign = (currGear === Gear.D) ? +1.0 : -1.0;
 
-  // Stage 2: trajectory intent (Tc_total_req + TdF_req + TdR_req)
-  let Tc_total_req = 0;
+  // Stage 2: Tc_total_req
+  let Tc_total_req = 0.0;
 
   if (throttleInput >= 0) {
     Tc_total_req = gearSign * throttleInput;
@@ -384,68 +388,56 @@ function TorqueVectoring(currGear, t, s, lastFront, lastRear) {
     const best = bestMotionWheel(sense, vRefAbs);
     let motionSign = gearSign;
     if (best >= 0) {
-      const wbest = sense.w[best];
-      motionSign = wbest > 0 ? +1 : wbest < 0 ? -1 : gearSign;
+      const wb = sense.w[best];
+      motionSign = (wb > 0) ? +1.0 : (wb < 0) ? -1.0 : gearSign;
     }
 
-    // anti-reversing fade near standstill (uses vRefAbs)
     let brakeScale = 1.0;
     if (TV.AntiReversingSpeed > 1.0) {
       brakeScale = clampF(vRefAbs / TV.AntiReversingSpeed, 0.0, 1.0);
     }
 
-    Tc_total_req = -motionSign * bmag * brakeScale;
+    Tc_total_req = (-motionSign) * bmag * brakeScale;
   }
 
-  // front/rear bias based on |Tc_total|
+  // front/rear bias: use absolute torque ramp with new full-torque params
   const TcAbs = absf(Tc_total_req);
-  const normMax = Tc_total_req >= 0 ? maxDrive : maxBrake;
-
-  let uBias =
-    TV.BiasHighThrottle * normMax > 1e-6
-      ? TcAbs / (TV.BiasHighThrottle * normMax)
-      : 1.0;
+  const full = (Tc_total_req >= 0) ? TV.FrontRearBiasFullTorqueDrive : TV.FrontRearBiasFullTorqueBrake;
+  let uBias = (full > 1e-6) ? (TcAbs / full) : 1.0;
   uBias = clampF(uBias, 0.0, 1.0);
 
   let frontShare = 0.5;
-  if (Tc_total_req >= 0) {
-    frontShare = lerp(TV.DriveFrontShareLow, TV.DriveFrontShareHigh, uBias);
-  } else {
-    frontShare = lerp(TV.BrakeFrontShareLow, TV.BrakeFrontShareHigh, uBias);
-  }
+  if (Tc_total_req >= 0) frontShare = lerp(TV.DriveFrontShareLow, TV.DriveFrontShareHigh, uBias);
+  else                   frontShare = lerp(TV.BrakeFrontShareLow, TV.BrakeFrontShareHigh, uBias);
   frontShare = clampF(frontShare, 0.05, 0.95);
 
   let TcF_req = Tc_total_req * frontShare;
   let TcR_req = Tc_total_req * (1.0 - frontShare);
 
-  // front steering differential (primary actuator)
-  let TdF_req = 0;
+  // TdF_req (front steering actuator)
+  let TdF_req = 0.0;
   {
     const vFrontAbs = axleSpeedAbs(sense, FL, FR);
-    let uf =
-      TV.SteerTorqueHighSpeed > 1.0 ? vFrontAbs / TV.SteerTorqueHighSpeed : 1.0;
+    let uf = (TV.SteerTorqueHighSpeed > 1.0) ? (vFrontAbs / TV.SteerTorqueHighSpeed) : 1.0;
     uf = clampF(uf, 0.0, 1.0);
     const kSteer = lerp(TV.SteerTorqueLowFactor, TV.SteerTorqueHighFactor, uf);
-    // Pair convention: FL = Tc + Td, FR = Tc - Td
     TdF_req = sNorm * TV.SteerTorqueFront * kSteer;
   }
 
-  // rear yaw assist (only in D)
-  let TdR_req = 0;
+  // TdR_req (rear yaw assist; only D)
+  let TdR_req = 0.0;
   if (currGear === Gear.D && absS > 0.001) {
     const vRearAbs = axleSpeedAbs(sense, RL, RR);
 
     let us = 1.0;
     if (TV.RearFadeSpeed1 > TV.RearFadeSpeed0) {
-      us =
-        (vRearAbs - TV.RearFadeSpeed0) /
-        (TV.RearFadeSpeed1 - TV.RearFadeSpeed0);
+      us = (vRearAbs - TV.RearFadeSpeed0) / (TV.RearFadeSpeed1 - TV.RearFadeSpeed0);
       us = clampF(us, 0.0, 1.0);
     }
 
     const rearEffAbs = absf(TcR_req);
-    const t0 = TV.RearFadeThrottle0 * normMax;
-    const t1 = TV.RearFadeThrottle1 * normMax;
+    const t0 = TV.RearFadeTorque0;
+    const t1 = TV.RearFadeTorque1;
 
     let uLong = 1.0;
     if (t1 > t0) {
@@ -459,47 +451,38 @@ function TorqueVectoring(currGear, t, s, lastFront, lastRear) {
     uSteer = clampF(uSteer, 0.0, 1.0);
 
     const fadeRear = us * Math.max(uLong, uSteer);
-
     const oppMag = absS * TV.SteerTorqueRear;
 
-    // SIGN: s>0 => TdR>0 => RR reduced / can go negative
-    //       s<0 => TdR<0 => RL reduced / can go negative
-    TdR_req = sNorm > 0 ? +oppMag : -oppMag;
+    TdR_req = (sNorm > 0) ? (+oppMag) : (-oppMag);
     TdR_req *= fadeRear;
   }
 
-  // Stage 3: solve axle pairs under caps (keep Td)
+  // Stage 3: solve under caps, keep Td
   let front = solvePairCaps(
-    TcF_req,
-    TdF_req,
-    sense.capNeg[FL],
-    sense.capPos[FL],
-    sense.capNeg[FR],
-    sense.capPos[FR],
+    TcF_req, TdF_req,
+    sense.capNeg[FL], sense.capPos[FL],
+    sense.capNeg[FR], sense.capPos[FR]
   );
 
   let rear = solvePairCaps(
-    TcR_req,
-    TdR_req,
-    sense.capNeg[RL],
-    sense.capPos[RL],
-    sense.capNeg[RR],
-    sense.capPos[RR],
+    TcR_req, TdR_req,
+    sense.capNeg[RL], sense.capPos[RL],
+    sense.capNeg[RR], sense.capPos[RR]
   );
 
-  // Stage 4: reallocate missing Tc (keep Td fixed)
+  // Stage 4: reallocate missing Tc (keep Td)
   const Tc_done = front.Tc + rear.Tc;
   let need = Tc_total_req - Tc_done;
 
   if (absf(need) > 1e-3) {
     const headroom = (Tc, TcMin, TcMax, needSign) => {
-      if (needSign > 0) return TcMax - Tc;
-      if (needSign < 0) return Tc - TcMin;
+      if (needSign > 0) return (TcMax - Tc);
+      if (needSign < 0) return (Tc - TcMin);
       return 0;
     };
 
     const availF = headroom(front.Tc, front.TcMin, front.TcMax, need);
-    const availR = headroom(rear.Tc, rear.TcMin, rear.TcMax, need);
+    const availR = headroom(rear.Tc,  rear.TcMin,  rear.TcMax,  need);
     const sum = availF + availR;
 
     if (sum > 1e-6) {
@@ -507,39 +490,37 @@ function TorqueVectoring(currGear, t, s, lastFront, lastRear) {
       const dR = need * (availR / sum);
 
       front.Tc = clampF(front.Tc + dF, front.TcMin, front.TcMax);
-      rear.Tc = clampF(rear.Tc + dR, rear.TcMin, rear.TcMax);
+      rear.Tc  = clampF(rear.Tc  + dR, rear.TcMin,  rear.TcMax);
 
       front.L = front.Tc + front.Td;
       front.R = front.Tc - front.Td;
-      rear.L = rear.Tc + rear.Td;
-      rear.R = rear.Tc - rear.Td;
+      rear.L  = rear.Tc  + rear.Td;
+      rear.R  = rear.Tc  - rear.Td;
     }
   }
 
   let wheel = [front.L, front.R, rear.L, rear.R];
 
-  // Stage 5: optional final rate limit (uses TV.MaxTorquePerTick)
-  {
-    const maxDelta = TV.MaxTorquePerTick * Math.max(maxDrive, maxBrake);
-    for (let i = 0; i < 4; i++) {
-      const d = wheel[i] - st.lastWheelCmd[i];
-      if (d > maxDelta) wheel[i] = st.lastWheelCmd[i] + maxDelta;
-      if (d < -maxDelta) wheel[i] = st.lastWheelCmd[i] - maxDelta;
-      st.lastWheelCmd[i] = wheel[i];
-    }
-  }
-
-  // Stage 6: final clamp to caps + physical limits
+  // Stage 5: final rate limit (NOTE: MaxTorquePerTick is absolute torque units/tick now)
   for (let i = 0; i < 4; i++) {
+    const d = wheel[i] - st.lastWheelCmd[i];
+    if (d >  TV.MaxTorquePerTick) wheel[i] = st.lastWheelCmd[i] + TV.MaxTorquePerTick;
+    if (d < -TV.MaxTorquePerTick) wheel[i] = st.lastWheelCmd[i] - TV.MaxTorquePerTick;
     wheel[i] = clampF(wheel[i], sense.capNeg[i], sense.capPos[i]);
     wheel[i] = clampF(wheel[i], -maxBrake, +maxDrive);
+    st.lastWheelCmd[i] = wheel[i];
+  }
+
+  if ((wheel[FL] > 0) && (st.vehicleSpeedAbs < 10) && (t < 0))
+  {
+    console.log(`Producing FL=${wheel[FL]}`);
   }
 
   return Torques(
     truncTowardZero(wheel[FL]),
     truncTowardZero(wheel[FR]),
     truncTowardZero(wheel[RL]),
-    truncTowardZero(wheel[RR]),
+    truncTowardZero(wheel[RR])
   );
 }
 
