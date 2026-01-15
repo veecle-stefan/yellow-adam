@@ -106,7 +106,7 @@ struct DriveParams
         // Lower bound for slip scaling (never reduce below this).
         // Prevents permanent "torque = 0" and allows recovery.
         // Default: 0.25
-        float SlipMinScale = 0.25f;
+        float SlipMinTorque = 50.f;
 
         // Recovery rate per tick when no slip is detected (towards 1.0).
         // Default: 0.10
@@ -115,12 +115,6 @@ struct DriveParams
         // Minimum reference speed to activate slip detection (noise floor).
         // Default: 10.0
         float SlipSpeedEps = 20.f;
-
-        // Deadband for slip detection based on requested torque magnitude.
-        // Ignore slip logic if |torqueCmd| < SlipTorqueEps * MaxOutputLimit.
-        // Helps avoid ABS/ASR fighting small steering differentials/noise.
-        // Default: 0.1
-        float SlipTorqueEps = 0.1f;
 
         // -------------------------------------------------------------------------
         // Axle torque bias (load transfer compensation)
@@ -153,6 +147,9 @@ struct DriveParams
         float maxSpeedRev = 60.f;
         float maxPowerDrive = 250.f;
         float maxPowerBrake = 600.f;
+
+        float maxRealisticAccel = 30.f;
+        float maxRealisticDecel = 40.f;
 
     } TV;
 

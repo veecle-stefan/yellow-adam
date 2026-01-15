@@ -46,10 +46,9 @@ namespace
         // ----- ABS/ASR slip control -----
         {"SlipRatio", &DriveParams::TVParams::SlipRatio, 0.0f, 1.0f},
         {"SlipDownFactor", &DriveParams::TVParams::SlipDownFactor, 0.0f, 1.0f},
-        {"SlipMinScale", &DriveParams::TVParams::SlipMinScale, 0.0f, 1.0f},
+        {"SlipMinTorque", &DriveParams::TVParams::SlipMinTorque, 10.0f, 500.0f},
         {"SlipRecoverPerTick", &DriveParams::TVParams::SlipRecoverPerTick, 0.0f, 1.0f},
         {"SlipSpeedEps", &DriveParams::TVParams::SlipSpeedEps, 0.0f, 500.0f},
-        {"SlipTorqueEps", &DriveParams::TVParams::SlipTorqueEps, 0.0f, 1.0f},
 
         // ----- Front/rear bias -----
         {"DriveFrontShareLow", &DriveParams::TVParams::DriveFrontShareLow, 0.0f, 1.0f},

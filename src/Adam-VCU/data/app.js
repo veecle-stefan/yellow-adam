@@ -194,16 +194,15 @@ const tuningKeys = [
 
   { id: 10, name: "SlipRatio",             min: 0.0, max: 1.0 },
   { id: 11, name: "SlipDownFactor",        min: 0.0, max: 1.0 },
-  { id: 12, name: "SlipMinScale",          min: 0.0, max: 1.0 },
+  { id: 12, name: "SlipMinTorque",         min: 10.0, max: 500.0 },
   { id: 13, name: "SlipRecoverPerTick",    min: 0.0, max: 1.0 },
   { id: 14, name: "SlipSpeedEps",          min: 0.0, max: 500.0 },
-  { id: 15, name: "SlipTorqueEps",         min: 0.0, max: 1.0 },
 
-  { id: 16, name: "DriveFrontShareLow",    min: 0.0, max: 1.0 },
-  { id: 17, name: "DriveFrontShareHigh",   min: 0.0, max: 1.0 },
-  { id: 18, name: "BrakeFrontShareLow",    min: 0.0, max: 1.0 },
-  { id: 19, name: "BrakeFrontShareHigh",   min: 0.0, max: 1.0 },
-  { id: 20, name: "BiasHighThrottle",      min: 0.0, max: 5.0 },
+  { id: 15, name: "DriveFrontShareLow",    min: 0.0, max: 1.0 },
+  { id: 16, name: "DriveFrontShareHigh",   min: 0.0, max: 1.0 },
+  { id: 17, name: "BrakeFrontShareLow",    min: 0.0, max: 1.0 },
+  { id: 18, name: "BrakeFrontShareHigh",   min: 0.0, max: 1.0 },
+  { id: 19, name: "BiasHighThrottle",      min: 0.0, max: 5.0 },
 ];
 
 const tuneKeyEl    = document.getElementById("tune_key");
@@ -232,16 +231,15 @@ const tuningLast = {
 
   10: 0.20,  // SlipRatio
   11: 0.70,  // SlipDownFactor
-  12: 0.25,  // SlipMinScale
+  12: 50.0,  // SlipMinTorque
   13: 0.20,  // SlipRecoverPerTick
   14: 20.0,  // SlipSpeedEps
-  15: 0.10,  // SlipTorqueEps
 
-  16: 0.55,  // DriveFrontShareLow
-  17: 0.30,  // DriveFrontShareHigh
-  18: 0.60,  // BrakeFrontShareLow
-  19: 0.80,  // BrakeFrontShareHigh
-  20: 0.60,  // BiasHighThrottle
+  15: 0.55,  // DriveFrontShareLow
+  16: 0.30,  // DriveFrontShareHigh
+  17: 0.60,  // BrakeFrontShareLow
+  18: 0.80,  // BrakeFrontShareHigh
+  19: 0.60,  // BiasHighThrottle
 };
 
 function fmt3(x){

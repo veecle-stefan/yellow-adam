@@ -48,5 +48,23 @@ public:
     Torques Compute(const TickContext &ctx, const Gear& currGear); 
 
 protected:
+    struct SenseData
+    {
+        // Signed wheel speeds (from feedback)
+        bool ok[4] = {false, false, false, false};
+        float w[4] = {0, 0, 0, 0};    // signed
+        float wAbs[4] = {0, 0, 0, 0}; // abs
+        float vehicleSpeedAbs = 0.f;
 
+        // Per-wheel torque envelope for THIS tick
+        float capPos[4] = {0, 0, 0, 0}; // max allowed positive torque
+        float capNeg[4] = {0, 0, 0, 0}; // min allowed negative torque (<=0)
+    };
+
+    SenseData Sense(const TickContext &ctx, Gear currGear);
+
+    float m_vehicleSpeedAbs = 0.f; // persisted across ticks
+    bool m_capsInit;
+	float m_capPos[4];
+	float m_capNeg[4];
 };
