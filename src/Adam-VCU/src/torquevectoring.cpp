@@ -152,15 +152,13 @@ TorqueVectoring::SenseData TorqueVectoring::Sense(const TickContext &ctx, Gear c
     // =========================
     // ASR/ABS torque envelopes per wheel (persistent, updated each tick)
     // =========================
-    const float maxDrive = static_cast<float>(ctx.params->TV.maxTorqueDrive);
-    const float maxBrake = static_cast<float>(ctx.params->TV.maxTorqueBrake); // magnitude
 
     if (!m_capsInit)
     {
         for (int i = 0; i < 4; ++i)
         {
-            m_capPos[i] = maxDrive;
-            m_capNeg[i] = -maxBrake;
+            m_capPos[i] = ctx.params->TV.maxTorqueDrive;
+            m_capNeg[i] = -ctx.params->TV.maxTorqueBrake;
         }
         m_capsInit = true;
     }
@@ -192,14 +190,14 @@ TorqueVectoring::SenseData TorqueVectoring::Sense(const TickContext &ctx, Gear c
     for (int i = 0; i < 4; ++i)
     {
         m_capPos[i] += recover;
-        if (m_capPos[i] > maxDrive)
-            m_capPos[i] = maxDrive;
+        if (m_capPos[i] > ctx.params->TV.maxTorqueDrive)
+            m_capPos[i] = ctx.params->TV.maxTorqueDrive;
         if (m_capPos[i] < minT)
             m_capPos[i] = minT;
 
         m_capNeg[i] -= recover ;
-        if (m_capNeg[i] < -maxBrake)
-            m_capNeg[i] = -maxBrake;
+        if (m_capNeg[i] < -ctx.params->TV.maxTorqueBrake)
+            m_capNeg[i] = -ctx.params->TV.maxTorqueBrake;
         if (m_capNeg[i] > -minT)
             m_capNeg[i] = -minT;
     }
@@ -271,8 +269,8 @@ TorqueVectoring::SenseData TorqueVectoring::Sense(const TickContext &ctx, Gear c
     // Output for this tick (clamped to CURRENT live limits)
     for (int i = 0; i < 4; ++i)
     {
-        sd.capPos[i] = std::clamp(m_capPos[i], minT, maxDrive);
-        sd.capNeg[i] = std::clamp(m_capNeg[i], -maxBrake, -minT);
+        sd.capPos[i] = std::clamp(m_capPos[i], minT, ctx.params->TV.maxTorqueDrive);
+        sd.capNeg[i] = std::clamp(m_capNeg[i], -ctx.params->TV.maxTorqueBrake, -minT);
     }
 
     // =========================================================================
@@ -303,11 +301,11 @@ TorqueVectoring::SenseData TorqueVectoring::Sense(const TickContext &ctx, Gear c
 
         auto capFromSpeed = [&](float vForCap) -> float
         {
-            if (vForCap <= vStart) return maxDrive;
+            if (vForCap <= vStart) return ctx.params->TV.maxTorqueDrive;
             if (vForCap >= vMax)   return 0.f;
 
             const float u = (vForCap - vStart) / band; // 0..1
-            return maxDrive * (1.f - std::clamp(u, 0.f, 1.f));
+            return ctx.params->TV.maxTorqueDrive * (1.f - std::clamp(u, 0.f, 1.f));
         };
 
         for (int i = 0; i < 4; ++i)
@@ -409,8 +407,8 @@ TorqueVectoring::Torques TorqueVectoring::Compute(const TickContext& ctx, const 
     const float s = static_cast<float>(ctx.user.steering) / 1000.0f;   // convention: -left, +right
     const float absS = std::fabs(s);
 
-    const float maxDrive = static_cast<float>(TV.maxTorqueDrive);
-    const float maxBrake = static_cast<float>(TV.maxTorqueBrake);
+    const float maxDrive = TV.maxTorqueDrive;
+    const float maxBrake = TV.maxTorqueBrake;
 
     // requested magnitude in "torque units"
     const float maxT = (ctx.user.throttle >= 0) ? maxDrive : maxBrake;
@@ -474,10 +472,9 @@ TorqueVectoring::Torques TorqueVectoring::Compute(const TickContext& ctx, const 
 
         const float kSteer = std::lerp(TV.SteerTorqueLowFactor, TV.SteerTorqueHighFactor, uf);
 
-        // SIGN: s<0 => Td<0 => FR gets more torque  ✅
-        //       s>0 => Td>0 => FL gets more torque  ✅
+        // SIGN: s<0 => Td<0 => FR gets more torque
+        //       s>0 => Td>0 => FL gets more torque
         // Pair convention: FL = Tc + Td, FR = Tc - Td
-        // (matches your old code)
         // NOTE: No clamping here; caps solver will clip if needed.
         //       Optional rate limit later.
         //       For now: pure intent.
@@ -516,7 +513,7 @@ TorqueVectoring::Torques TorqueVectoring::Compute(const TickContext& ctx, const 
             uLong = std::clamp(uLong, 0.f, 1.f);
         }
 
-        // no new params: keep your old steering fade constants
+        // TODO: Could be a params.TV configuration
         const float s0 = 0.05f;
         const float s1 = 0.25f;
         float uSteer = (absS - s0) / (s1 - s0);
@@ -524,10 +521,10 @@ TorqueVectoring::Torques TorqueVectoring::Compute(const TickContext& ctx, const 
 
         const float fadeRear = us * std::max(uLong, uSteer);
 
-        const float oppMag = absS * static_cast<float>(TV.SteerTorqueRear);
+        const float oppMag = absS * TV.SteerTorqueRear;
 
-        // SIGN: s>0 => TdR>0 => RR reduced / can go negative ✅
-        //       s<0 => TdR<0 => RL reduced / can go negative ✅
+        // SIGN: s>0 => TdR>0 => RR reduced / can go negative
+        //       s<0 => TdR<0 => RL reduced / can go negative
         TdR_req = (s > 0.f) ? (+oppMag) : (-oppMag);
         TdR_req *= fadeRear;
     }
