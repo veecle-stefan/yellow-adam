@@ -92,7 +92,7 @@ public:
     };
 
     DriveTrain(Axle& axleF, Axle& axleR, Lights& lights);
-    bool GetLatestStatus(DriveTrainStatus& out) const;
+    QueueHandle_t GetStatusQueue() const;
     void Shutdown();
     void SendCommand(const CommandItem* cmd);
     void SendGear(TorqueVectoring::Gear newGear);

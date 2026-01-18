@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include "swconfig.h"
 #include "webserver.h"
 
 static constexpr uint16_t DNS_PORT = 53;
@@ -6,11 +7,14 @@ static constexpr uint16_t HTTP_PORT = 80;
 
 WebServer::WebServer()
 : _server(HTTP_PORT),
-  _ws("/ws") {
+  _ws("/ws"),
+  _json(400) { // buffer size 400 bytes
 }
 
-bool WebServer::begin(const IPAddress& apIp, const char* hostname)
+bool WebServer::begin(const IPAddress& apIp, const char* hostname, QueueHandle_t statusQueue, DriveTrain* drive, uint32_t updateInterval)
 {
+  if (_started) return false;
+
   _apIp = apIp;
 
   if (!LittleFS.begin(true)) {   // true = format on fail (good for first boot)
@@ -37,20 +41,97 @@ bool WebServer::begin(const IPAddress& apIp, const char* hostname)
   _server.begin();
   _started = true;
 
-  Serial.printf("[Web] Captive portal up: http://%s/\n", _apIp.toString().c_str());
+  this->_statusQueue = statusQueue;
+  this->_updateInterval = updateInterval;
+  xTaskCreatePinnedToCore(
+    [](void* pvParameters) {
+        static_cast<WebServer*>(pvParameters)->_backgroundUpdates();
+        vTaskDelete(NULL);
+    },
+    "WS",
+    SWConfig::Tasks::MinStakSize,
+    this,
+    SWConfig::Tasks::PrioMed,
+    &this->_bgTask,
+    SWConfig::CoreAffinity::CoreComms
+);
+
+  onWsMessage([&](const String& msg){
+      _json.DispatchCommand(msg, drive);
+    });
+
   return true;
 }
 
-void WebServer::loop()
+void WebServer::_backgroundUpdates()
 {
+  TickType_t       lastWakeTime = xTaskGetTickCount();
+  uint32_t timeAbs = 0;
+  DriveTrain::DriveTrainStatus st;
+
+  for(;;) {
+
+    if (xQueuePeek(this->_statusQueue, &st, 0) == pdTRUE)
+    {
+      // there was (new) data
+      size_t n = _json.EncodeStatusJson(st);
+      if (n > 0) {
+        broadcastText(_json.buffer);
+      }
+    }
+
+    // clean up every second
+    if (timeAbs % 1000 == 0) {
+      tidy();
+    }
+
+    vTaskDelayUntil(&lastWakeTime, this->_updateInterval);
+    timeAbs += this->_updateInterval;
+  }
+}
+
+void WebServer::tidy() {
   if (!_started) return;
-  // _dns.processNextRequest();  // keep captive portal DNS responsive
+
+  _ws.cleanupClients();
+
+  const uint32_t now = millis();
+
+  // Close stale connected clients
+  for (AsyncWebSocketClient& c : _ws.getClients()) {
+    if (c.status() != WS_CONNECTED) continue;
+
+    auto it = _wsLastSeen.find(c.id());
+    const bool stale = (it == _wsLastSeen.end()) || ((now - it->second) > WSIdleTimeout);
+    if (stale) {
+      Serial.printf("[WS] #%u stale -> closing\n", c.id());
+      c.close();
+      _wsLastSeen.erase(c.id());
+    }
+  }
+
+  // Optional: prune entries for clients that no longer exist (belt+braces)
+  for (auto it = _wsLastSeen.begin(); it != _wsLastSeen.end(); ) {
+    AsyncWebSocketClient* cptr = _ws.client(it->first); // if your build supports this
+    if (!cptr || cptr->status() != WS_CONNECTED) it = _wsLastSeen.erase(it);
+    else ++it;
+  }
 }
 
 void WebServer::broadcastText(const char* msg)
 {
   if (!_started) return;
-  _ws.textAll(msg);
+
+  // Avoid queue explosion: only send to clients that can accept data.
+  // (queueIsFull() exists on AsyncWebSocketClient in common builds.)
+  for (AsyncWebSocketClient& client : _ws.getClients()) {
+    if (client.status() != WS_CONNECTED) continue;
+
+    // If client is slow, skip this tick rather than buffering infinitely.
+    if (client.queueIsFull()) continue;
+
+    client.text(msg);
+  }
 }
 
 void WebServer::onWsMessage(WsMessageHandler cb)
@@ -68,28 +149,42 @@ void WebServer::_setupWebSocket()
                      size_t len) {
     (void)server; (void)arg;
 
+    const uint32_t now = millis();
+
     switch (type) {
-      case WS_EVT_CONNECT:
-        Serial.printf("[WS] Client #%u connected from %s\n",
-                      client->id(), client->remoteIP().toString().c_str());
-        // Optional: send initial state
+      case WS_EVT_CONNECT: 
+        // Newest wins: disconnect everyone else so you can always regain control.
+        for (AsyncWebSocketClient& c : _ws.getClients()) {
+          if (c.id() != client->id()) {
+            c.close();
+          }
+        }
+
+        // memorise last interaction
+        _wsLastSeen[client->id()] = now;
+
         client->text("{\"type\":\"hello\",\"msg\":\"connected\"}");
         break;
 
       case WS_EVT_DISCONNECT:
-        Serial.printf("[WS] Client #%u disconnected\n", client->id());
+        _wsLastSeen.erase(client->id());
+
+        //Serial.printf("[WS] Client #%u disconnected\n", client->id());
         break;
 
       case WS_EVT_DATA: {
-        auto* info = (AwsFrameInfo*)arg;
-        if (!info || info->final == false || info->index != 0) return;
+        // Any inbound traffic = alive. No need to detect "hb".
+        _wsLastSeen[client->id()] = now;
+
+        // Only dispatch complete TEXT frames to your app callback
+        AwsFrameInfo* info = (AwsFrameInfo*)arg;
+        if (!info || !info->final || info->index != 0) return;
         if (info->opcode != WS_TEXT) return;
 
         String msg;
         msg.reserve(len + 1);
-        for (size_t i = 0; i < len; i++) msg += (char)data[i];
+        msg.concat((const char*)data, len);
 
-        Serial.printf("[WS] <- %s\n", msg.c_str());
         if (_wsCb) _wsCb(msg);
         break;
       }
@@ -99,7 +194,9 @@ void WebServer::_setupWebSocket()
     }
   });
 
+  _ws.enable(true);
   _server.addHandler(&_ws);
+
 }
 
 bool WebServer::_isCaptivePortalRequest(AsyncWebServerRequest* request)

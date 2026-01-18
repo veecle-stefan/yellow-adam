@@ -14,11 +14,14 @@ static const char* AP_SSID = "Adam";
 static const char* AP_PASS = "opeladam2026"; // >= 8 chars recommended
 static const char* hostname = "adam";
 WebServer portal;
-JSONInteraction json(400);
 
 // Example "other code" that must keep running
 static uint32_t lastBlinkMs = 0;
 static bool ledState = false;
+
+static constexpr bool Every(uint32_t time, uint32_t interval) noexcept {
+  return (time % interval == 0);
+}
 
 static void setupWiFiAP()
 {
@@ -40,7 +43,7 @@ static void setupWiFiAP()
   Serial.printf("[WiFi] AP IP: %s\n", WiFi.softAPIP().toString().c_str());
 }
 
-static void setupOTA()
+static IPAddress setupOTA()
 {
   // The hostname shows up in the Arduino IDE / platformio-ota list
   ArduinoOTA.setHostname(hostname);
@@ -79,11 +82,7 @@ static void setupOTA()
   ArduinoOTA.begin();
   Serial.println("[OTA] Ready (AP mode)");
 
-  portal.onWsMessage([](const String& msg){
-    json.DispatchCommand(msg, drive);
-  });
-  IPAddress apIp = WiFi.softAPIP();
-  portal.begin(apIp, hostname);
+  return WiFi.softAPIP();
 }
 
 
@@ -92,31 +91,16 @@ void setup() {
   Serial.println("Adam VCU starting");
 
   setupWiFiAP();   // returns immediately; no waiting
-  setupOTA();      // OTA works over the AP network
+  IPAddress ip = setupOTA();      // OTA works over the AP network
 
   drive = new DriveTrain(axleF, axleR, lights);
+
+  portal.begin(ip, hostname, drive->GetStatusQueue(), drive, 100); // every 100ms
 }
 
 void loop() {
   // put your main code here, to run repeatedly:
   ArduinoOTA.handle();
-
-  portal.loop();
-
-  // Example: broadcast status occasionally
-  static uint32_t last = 0;
-  uint32_t currTime = millis();
-  if (currTime - last > 100) {
-    last = currTime;
-
-    DriveTrain::DriveTrainStatus st;
-    if (drive->GetLatestStatus(st)) {
-      size_t n = json.EncodeStatusJson(st);
-      if (n > 0) {
-        portal.broadcastText(json.buffer);
-      }
-    }
-  }
 
   vTaskDelay(1); // yield
 }

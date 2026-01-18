@@ -620,16 +620,37 @@ class WebSocketTransport {
     this.onMessage = onMessage;
     this.ws = null;
     this._reconnectTimer = 0;
+    this._hbTimer = 0;
   }
   connect() {
     this.onState?.("connecting");
     this.ws = new WebSocket(this.url);
-    this.ws.onopen = () => this.onState?.("connected");
+
+    this.ws.onopen = () => {
+      this.onState?.("connected");
+
+      // ---- HEARTBEAT START ----
+      clearInterval(this._hbTimer);
+      this._hbTimer = setInterval(() => {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+          this.ws.send("hb");   // server doesn't care about content
+        }
+      }, 2000);
+      // ---- HEARTBEAT END ----
+    };
+
     this.ws.onclose = () => {
       this.onState?.("disconnected");
+
+      // ---- HEARTBEAT STOP ----
+      clearInterval(this._hbTimer);
+      this._hbTimer = 0;
+      // ------------------------
+
       clearTimeout(this._reconnectTimer);
       this._reconnectTimer = setTimeout(() => this.connect(), 800);
     };
+
     this.ws.onerror = () => { try { this.ws.close(); } catch {} };
     this.ws.onmessage = (ev) => this.onMessage?.(ev.data);
   }
@@ -641,6 +662,10 @@ class WebSocketTransport {
   close() {
     clearTimeout(this._reconnectTimer);
     this._reconnectTimer = 0;
+
+    clearInterval(this._hbTimer);
+    this._hbTimer = 0;
+
     try { this.ws?.close(); } catch {}
   }
 }

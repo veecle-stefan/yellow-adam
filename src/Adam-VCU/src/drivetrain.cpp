@@ -120,10 +120,9 @@ void DriveTrain::SendSteer(int16_t throttle, int16_t steer)
     SendCommand(&cmd);
 }
 
-bool DriveTrain::GetLatestStatus(DriveTrainStatus& out) const
+QueueHandle_t DriveTrain::GetStatusQueue() const
 {
-  if (!statusQueue) return false;
-  return xQueuePeek(statusQueue, &out, 0) == pdTRUE;
+  return this->statusQueue;
 }
 
 

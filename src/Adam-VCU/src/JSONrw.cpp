@@ -46,10 +46,7 @@ bool JSONInteraction::DispatchCommand(const String& msg, DriveTrain* drive)
 
     // indicators: preserve other side by reading latest status
     if (name == "ind_l" || name == "ind_r") {
-      DriveTrainStatus st{};
-      drive->GetLatestStatus(st);
-      bool left = st.state.indicatorsL;
-      bool right = st.state.indicatorsR;
+      bool left = false, right = false;
       if (name == "ind_l") left = on; else right = on;
       drive->SendIndicators(left, right);
       return true;
