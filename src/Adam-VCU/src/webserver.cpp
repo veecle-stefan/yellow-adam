@@ -75,6 +75,7 @@ bool WebServer::begin(const IPAddress& apIp, const char* hostname, QueueHandle_t
 void WebServer::_backgroundUpdates()
 {
   DriveTrain::DriveTrainStatus st;
+  TickType_t lastWakeTime = xTaskGetTickCount();
 
   for (;;)
   {
@@ -97,7 +98,7 @@ void WebServer::_backgroundUpdates()
       }
     }
 
-    // No WS calls here. No tidy() here.
+    vTaskDelayUntil(&lastWakeTime, this->_updateInterval);
   }
 }
 
@@ -106,7 +107,6 @@ void WebServer::pump()
   if (!_started) return;
 
   // Send latest status if available (networking thread only)
-  bool send = false;
   const char* msg = nullptr;
 
   if (_txDirty)

@@ -15,10 +15,6 @@ static const char* AP_PASS = "opeladam2026"; // >= 8 chars recommended
 static const char* hostname = "adam";
 WebServer portal;
 
-// Example "other code" that must keep running
-static uint32_t lastBlinkMs = 0;
-static bool ledState = false;
-
 static constexpr bool Every(uint32_t time, uint32_t interval) noexcept {
   return (time % interval == 0);
 }

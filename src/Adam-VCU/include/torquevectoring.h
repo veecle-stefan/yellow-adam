@@ -44,13 +44,21 @@ protected:
     struct SenseData
     {
         bool  ok[4]   = {false,false,false,false};
-        float w[4]    = {0,0,0,0};    // signed wheel speeds
+        // Signed wheel speeds in MOTOR coordinates:
+        //  >0 means motor spins "forward" (as defined by controller),
+        //  <0 means motor spins "reverse".
+        float w[4]    = {0,0,0,0};
         float wAbs[4] = {0,0,0,0};    // abs wheel speeds
         float vehicleSpeedAbs = 0.f;
+        float cmdAtReading[4] = {0,0,0,0};
+        float motionSign = 0.f; // positive=forward motion of wheels
+        float gearDir = 0.f; // D=+1, R=-1, N=0
+        // sign of motion expressed "along gear" (i.e. +1 means moving in gear direction)
+        float motionSignAlongGear = 0.f; // = motionSign * gearDir when motionSign!=0
 
         // Per-wheel torque envelope for THIS tick
-        float capPos[4] = {0,0,0,0};  // max allowed + torque
-        float capNeg[4] = {0,0,0,0};  // min allowed - torque (<=0)
+        float capFwd[4] = {0,0,0,0};  // max allowed + torque
+        float capRev[4] = {0,0,0,0};  // min allowed - torque (<=0)
     };
 
     // ---- Stage 0: sensing + caps update
@@ -69,15 +77,15 @@ protected:
                                    float capNegR, float capPosR);
 
     static float AxleSpeedAbs(const SenseData& s, Wheel L, Wheel R);
-    static int   BestMotionWheel(const SenseData& s, float vRefAbs);
 
     // ---- Persistent state
     float m_vehicleSpeedAbs = 0.f;
 
     bool  m_capsInit = false;
-    float m_capPos[4] = {0,0,0,0};
-    float m_capNeg[4] = {0,0,0,0};
+    float m_capFwd[4] = {0,0,0,0};
+    float m_capRev[4] = {0,0,0,0};
 
-    // optional: rate limit memory for final wheel outputs
-    float m_lastWheelCmd[4] = {0,0,0,0};
+    // rate limit for front/rear steering
+    float m_lastTdF = 0.f;
+    float m_lastTdR = 0.f;
 };
