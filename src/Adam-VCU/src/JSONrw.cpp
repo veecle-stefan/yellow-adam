@@ -2,13 +2,6 @@
 #include <stdio.h>   // snprintf
 #include <stdarg.h>  // va_list
 
-JSONInteraction::JSONInteraction(size_t bufferSize):
-bufferSize(bufferSize)
-{
-  this->buffer = new char[bufferSize];
-  configASSERT(this->buffer);
-}
-
 static bool appendf(char* buf, size_t cap, size_t& used, const char* fmt, ...) {
   if (used >= cap) return false;
   va_list args;
@@ -140,7 +133,7 @@ bool JSONInteraction::DispatchCommand(const String& msg, DriveTrain* drive)
   return false;
 }
 
-size_t JSONInteraction::EncodeStatusJson(const DriveTrainStatus& st)
+size_t JSONInteraction::EncodeStatusJson(const DriveTrainStatus& st, char* buffer, size_t bufferSize)
 {
   
   size_t used = 0;

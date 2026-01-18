@@ -101,6 +101,7 @@ void setup() {
 void loop() {
   // put your main code here, to run repeatedly:
   ArduinoOTA.handle();
+  portal.pump();
 
   vTaskDelay(1); // yield
 }

@@ -7,8 +7,7 @@ static constexpr uint16_t HTTP_PORT = 80;
 
 WebServer::WebServer()
 : _server(HTTP_PORT),
-  _ws("/ws"),
-  _json(400) { // buffer size 400 bytes
+  _ws("/ws") { // buffer size 400 bytes
 }
 
 bool WebServer::begin(const IPAddress& apIp, const char* hostname, QueueHandle_t statusQueue, DriveTrain* drive, uint32_t updateInterval)
@@ -43,6 +42,16 @@ bool WebServer::begin(const IPAddress& apIp, const char* hostname, QueueHandle_t
 
   this->_statusQueue = statusQueue;
   this->_updateInterval = updateInterval;
+  _txMutex = xSemaphoreCreateMutex();
+  configASSERT(_txMutex);
+  _wsMutex = xSemaphoreCreateMutex();
+  configASSERT(_wsMutex);
+
+  _txBuf[0] = new char[WSTextBufferSize];
+  _txBuf[1] = new char[WSTextBufferSize];
+  configASSERT(_txBuf[0] && _txBuf[1]);
+  _txBuf[0][0] = 0;
+  _txBuf[1][0] = 0;
   xTaskCreatePinnedToCore(
     [](void* pvParameters) {
         static_cast<WebServer*>(pvParameters)->_backgroundUpdates();
@@ -56,8 +65,8 @@ bool WebServer::begin(const IPAddress& apIp, const char* hostname, QueueHandle_t
     SWConfig::CoreAffinity::CoreComms
 );
 
-  onWsMessage([&](const String& msg){
-      _json.DispatchCommand(msg, drive);
+  onWsMessage([drive](const String& msg){
+      JSONInteraction::DispatchCommand(msg, drive);
     });
 
   return true;
@@ -65,28 +74,58 @@ bool WebServer::begin(const IPAddress& apIp, const char* hostname, QueueHandle_t
 
 void WebServer::_backgroundUpdates()
 {
-  TickType_t       lastWakeTime = xTaskGetTickCount();
-  uint32_t timeAbs = 0;
   DriveTrain::DriveTrainStatus st;
 
-  for(;;) {
-
-    if (xQueuePeek(this->_statusQueue, &st, 0) == pdTRUE)
+  for (;;)
+  {
+    // Block until new status is available (or wake periodically)
+    if (xQueueReceive(_statusQueue, &st, pdMS_TO_TICKS(_updateInterval)) == pdTRUE)
     {
-      // there was (new) data
-      size_t n = _json.EncodeStatusJson(st);
-      if (n > 0) {
-        broadcastText(_json.buffer);
+      // Encode into back buffer
+      const uint8_t back = _txFront ^ 1;
+
+      
+      size_t n = JSONInteraction::EncodeStatusJson(st, _txBuf[back], WSTextBufferSize);
+      if (n > 0)
+      {
+        _txBuf[back][n] = 0; // ensure 0-terminated
+
+        xSemaphoreTake(_txMutex, portMAX_DELAY);
+        _txFront = back;
+        _txDirty = true;
+        xSemaphoreGive(_txMutex);
       }
     }
 
-    // clean up every second
-    if (timeAbs % 1000 == 0) {
-      tidy();
-    }
+    // No WS calls here. No tidy() here.
+  }
+}
 
-    vTaskDelayUntil(&lastWakeTime, this->_updateInterval);
-    timeAbs += this->_updateInterval;
+void WebServer::pump()
+{
+  if (!_started) return;
+
+  // Send latest status if available (networking thread only)
+  bool send = false;
+  const char* msg = nullptr;
+
+  if (_txDirty)
+  {
+    xSemaphoreTake(_txMutex, portMAX_DELAY);
+    const uint8_t f = _txFront;
+    msg = _txBuf[f];
+    _txDirty = false;
+    xSemaphoreGive(_txMutex);
+
+    if (msg && msg[0]) broadcastText(msg);
+  }
+
+  // Rate-limited tidy
+  const uint32_t now = millis();
+  if ((now - _lastTidyMs) >= TidyEveryMs)
+  {
+    _lastTidyMs = now;
+    tidy();
   }
 }
 
@@ -98,6 +137,8 @@ void WebServer::tidy() {
   const uint32_t now = millis();
 
   // Close stale connected clients
+  xSemaphoreTake(_wsMutex, portMAX_DELAY);
+        
   for (AsyncWebSocketClient& c : _ws.getClients()) {
     if (c.status() != WS_CONNECTED) continue;
 
@@ -116,6 +157,7 @@ void WebServer::tidy() {
     if (!cptr || cptr->status() != WS_CONNECTED) it = _wsLastSeen.erase(it);
     else ++it;
   }
+  xSemaphoreGive(_wsMutex);
 }
 
 void WebServer::broadcastText(const char* msg)
@@ -147,7 +189,7 @@ void WebServer::_setupWebSocket()
                      void* arg,
                      uint8_t* data,
                      size_t len) {
-    (void)server; (void)arg;
+    (void)server;
 
     const uint32_t now = millis();
 
@@ -161,20 +203,26 @@ void WebServer::_setupWebSocket()
         }
 
         // memorise last interaction
+        xSemaphoreTake(_wsMutex, portMAX_DELAY);
         _wsLastSeen[client->id()] = now;
+        xSemaphoreGive(_wsMutex);
 
         client->text("{\"type\":\"hello\",\"msg\":\"connected\"}");
         break;
 
       case WS_EVT_DISCONNECT:
+        xSemaphoreTake(_wsMutex, portMAX_DELAY);
         _wsLastSeen.erase(client->id());
+        xSemaphoreGive(_wsMutex);
 
         //Serial.printf("[WS] Client #%u disconnected\n", client->id());
         break;
 
       case WS_EVT_DATA: {
         // Any inbound traffic = alive. No need to detect "hb".
+        xSemaphoreTake(_wsMutex, portMAX_DELAY);
         _wsLastSeen[client->id()] = now;
+        xSemaphoreGive(_wsMutex);
 
         // Only dispatch complete TEXT frames to your app callback
         AwsFrameInfo* info = (AwsFrameInfo*)arg;
@@ -194,7 +242,6 @@ void WebServer::_setupWebSocket()
     }
   });
 
-  _ws.enable(true);
   _server.addHandler(&_ws);
 
 }

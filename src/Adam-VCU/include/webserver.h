@@ -13,6 +13,8 @@
 class WebServer {
 public:
   static constexpr uint32_t WSIdleTimeout = 10000; // after 10s
+  static constexpr uint32_t TidyEveryMs = 1000;   // tune: 250..1000ms
+  static constexpr size_t WSTextBufferSize = 400;
 
   using WsMessageHandler = std::function<void(const String& msg)>;
 
@@ -24,6 +26,8 @@ public:
 
   // Must be called frequently in loop() for DNS captive portal handling
   void tidy();
+
+  void pump();
 
   // Push status/events to all connected websocket clients
   void broadcastText(const char* msg);
@@ -41,10 +45,19 @@ protected:
 
   WsMessageHandler _wsCb;
   std::unordered_map<uint32_t, uint32_t> _wsLastSeen;
-  JSONInteraction _json;
   QueueHandle_t _statusQueue;
   uint32_t _updateInterval = 0;
   TaskHandle_t _bgTask = NULL;
+  // status TX double buffer (produced by bg task, consumed by pump())
+  char*  _txBuf[2] = { nullptr, nullptr };
+  volatile uint8_t _txFront = 0;
+  volatile bool _txDirty = false;
+
+  SemaphoreHandle_t _txMutex = nullptr;
+  SemaphoreHandle_t _wsMutex = nullptr; // protects _wsLastSeen
+
+  // pump/tidy timers
+  uint32_t _lastTidyMs = 0;
 
 
   void _setupRoutes();
