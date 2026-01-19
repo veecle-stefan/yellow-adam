@@ -24,6 +24,94 @@ static inline float rateLimit(float target, float last, float maxDelta)
     return target;
 }
 
+// Helper: sign of a wheel speed in motor coords
+static inline int wheelSign(float w, float vEps)
+{
+    if (w > vEps)  return +1;
+    if (w < -vEps) return -1;
+    return 0;
+}
+
+// Helper: tighten the "assist" side of the torque envelope for a wheel
+static inline void tightenAssistCap(
+    float cmdAtReading, float assistSign, float minT, float downFactor,
+    float& capFwd, float& capRev)
+{
+    const float tSlip = std::fabs(cmdAtReading);
+    const float target = std::max(minT, tSlip * downFactor);
+    if (assistSign > 0.f)
+        capFwd = std::min(capFwd, target);
+    else
+        capRev = std::max(capRev, -target);
+}
+
+// Helper: tighten the "oppose" side of the torque envelope for a wheel
+static inline void tightenOpposeCap(
+    float cmdAtReading, float assistSign, float minT, float downFactor,
+    float& capFwd, float& capRev)
+{
+    const float tSlip = std::fabs(cmdAtReading);
+    const float target = std::max(minT, tSlip * downFactor);
+    if (assistSign > 0.f)
+        capRev = std::max(capRev, -target);
+    else
+        capFwd = std::min(capFwd, target);
+}
+
+// Helper: compute speed limiter cap based on speed
+static inline float capFromSpeed(float vForCap, float vStart, float vMax, float maxTorque)
+{
+    if (vForCap <= vStart) return maxTorque;
+    if (vForCap >= vMax)   return 0.f;
+    const float u = (vForCap - vStart) / (vMax - vStart);
+    return maxTorque * (1.f - std::clamp(u, 0.f, 1.f));
+}
+
+// Helper: compute front steering differential request
+static inline float computeFrontSteeringDiff(
+    float steering, float vFrontAbs,
+    float steerTorqueHighSpeed, float steerTorqueLowFactor,
+    float steerTorqueHighFactor, float steerTorqueFront)
+{
+    float uf = (steerTorqueHighSpeed > 1.f) ? (vFrontAbs / steerTorqueHighSpeed) : 1.f;
+    uf = std::clamp(uf, 0.f, 1.f);
+    const float kSteer = std::lerp(steerTorqueLowFactor, steerTorqueHighFactor, uf);
+    return steering * steerTorqueFront * kSteer;
+}
+
+// Helper: compute rear yaw assist differential request
+static inline float computeRearYawAssist(
+    float steering, float absS, float vRearAbs, float rearEffAbs,
+    float rearFadeSpeed0, float rearFadeSpeed1,
+    float rearFadeTorque0, float rearFadeTorque1,
+    float steerTorqueRear)
+{
+    float us = 1.f;
+    if (rearFadeSpeed1 > rearFadeSpeed0) {
+        us = (vRearAbs - rearFadeSpeed0) / (rearFadeSpeed1 - rearFadeSpeed0);
+        us = std::clamp(us, 0.f, 1.f);
+    }
+
+    float uLong = 1.f;
+    if (rearFadeTorque1 > rearFadeTorque0) {
+        uLong = (rearEffAbs - rearFadeTorque0) / (rearFadeTorque1 - rearFadeTorque0);
+        uLong = std::clamp(uLong, 0.f, 1.f);
+    }
+
+    // TODO: Could be a params.TV configuration
+    const float s0 = 0.05f;
+    const float s1 = 0.25f;
+    float uSteer = (absS - s0) / (s1 - s0);
+    uSteer = std::clamp(uSteer, 0.f, 1.f);
+
+    const float fadeRear = us * std::max(uLong, uSteer);
+    const float oppMag = absS * steerTorqueRear;
+
+    // SIGN: s>0 => TdR>0 => RR reduced / can go negative
+    //       s<0 => TdR<0 => RL reduced / can go negative
+    return ((steering > 0.f) ? (+oppMag) : (-oppMag)) * fadeRear;
+}
+
 // ============================================================================
 // SenseContext: Internal working data for Sense() sub-methods
 // - Not part of the public Sense() output (SenseData)
@@ -101,19 +189,6 @@ void TorqueVectoring::EstimateVehicleMotion(const TickContext& ctx, SenseData& s
     const uint8_t n = sc.numValid;
     const float vEps = ctx.params->TV.SlipSpeedEps;
 
-    // Helper: sign of a specific wheel in MOTOR coords
-    auto wheelSign = [&](int idx) -> int
-    {
-        if (idx < 0)
-            return 0;
-        const float w = sd.w[idx];
-        if (w > vEps)
-            return +1;
-        if (w < -vEps)
-            return -1;
-        return 0;
-    };
-
     // Robust measured reference speed v_ref_meas (abs) + motionSign (motor coords)
     float v_ref_meas = 0.f;
     float motionSign = 0.f; // -1,0,+1
@@ -153,8 +228,8 @@ void TorqueVectoring::EstimateVehicleMotion(const TickContext& ctx, SenseData& s
                 v_ref_meas = 0.5f * (sc.sorted[0].absSpeed + sc.sorted[1].absSpeed);
 
                 // SIGN: only if both wheels agree, else unknown
-                const int s0 = wheelSign(sc.sorted[0].index);
-                const int s1 = wheelSign(sc.sorted[1].index);
+                const int s0 = wheelSign(sd.w[sc.sorted[0].index], vEps);
+                const int s1 = wheelSign(sd.w[sc.sorted[1].index], vEps);
                 if (s0 != 0 && s0 == s1)
                     refWheelIdx = sc.sorted[0].index; // any of them is fine; they agree
                 else
@@ -170,8 +245,8 @@ void TorqueVectoring::EstimateVehicleMotion(const TickContext& ctx, SenseData& s
                 v_ref_meas = 0.5f * (sc.sorted[1].absSpeed + sc.sorted[2].absSpeed);
 
                 // SIGN: middle-two must agree, else unknown
-                const int s1 = wheelSign(sc.sorted[1].index);
-                const int s2 = wheelSign(sc.sorted[2].index);
+                const int s1 = wheelSign(sd.w[sc.sorted[1].index], vEps);
+                const int s2 = wheelSign(sd.w[sc.sorted[2].index], vEps);
                 if (s1 != 0 && s1 == s2)
                     refWheelIdx = sc.sorted[1].index; // any of the two is fine
                 else
@@ -240,13 +315,11 @@ void TorqueVectoring::EstimateVehicleMotion(const TickContext& ctx, SenseData& s
 // ============================================================================
 void TorqueVectoring::UpdateSlipEnvelopes(const TickContext& ctx, SenseData& sd, const SenseContext& sc)
 {
+    const auto& TV = ctx.params->TV;
     const float vRef = m_vehicleSpeedAbs;
-    const float vEps = ctx.params->TV.SlipSpeedEps;
-    const float slipRatio = ctx.params->TV.SlipRatio;
-    const float down = ctx.params->TV.SlipDownFactor;
-    const float recover = ctx.params->TV.SlipRecoverTorquePerTick;
-    const float minT = ctx.params->TV.SlipMinTorque;
-    const float hard = std::max(ctx.params->TV.maxTorqueDrive, ctx.params->TV.maxTorqueBrake);
+    const float vEps = TV.SlipSpeedEps;
+    const float minT = TV.SlipMinTorque;
+    const float hard = std::max(TV.maxTorqueDrive, TV.maxTorqueBrake);
 
     // Initialize caps on first run
     if (!m_capsInit)
@@ -262,10 +335,10 @@ void TorqueVectoring::UpdateSlipEnvelopes(const TickContext& ctx, SenseData& sd,
     // Recover towards +/- hard
     for (int i = 0; i < 4; i++)
     {
-        m_capFwd[i] = std::min(m_capFwd[i] + recover, +hard);
+        m_capFwd[i] = std::min(m_capFwd[i] + TV.SlipRecoverTorquePerTick, +hard);
         m_capFwd[i] = std::max(m_capFwd[i], minT);
 
-        m_capRev[i] = std::max(m_capRev[i] - recover, -hard);
+        m_capRev[i] = std::max(m_capRev[i] - TV.SlipRecoverTorquePerTick, -hard);
         m_capRev[i] = std::min(m_capRev[i], -minT); // keep negative
     }
 
@@ -317,8 +390,8 @@ void TorqueVectoring::UpdateSlipEnvelopes(const TickContext& ctx, SenseData& sd,
         else
         {
             // braking/opposing torque = opposes motion (only meaningful if moving)
-            const float hi = vRef * (1.f + slipRatio);
-            const float lo = vRef * (1.f - slipRatio);
+            const float hi = vRef * (1.f + TV.SlipRatio);
+            const float lo = vRef * (1.f - TV.SlipRatio);
 
             // ASR: wheel too fast under positive commanded torque
             if (cmdAssistMoving && wi > hi)
@@ -329,40 +402,10 @@ void TorqueVectoring::UpdateSlipEnvelopes(const TickContext& ctx, SenseData& sd,
                 slipOppose = true;
         }
 
-        auto tightenAssist = [&](int i)
-        {
-            const float tSlip = std::fabs(sd.cmdAtReading[i]); // torque that caused slip
-            const float target = std::max(minT, tSlip * down);
-
-            if (assistSign > 0.f)
-            {
-                m_capFwd[i] = std::min(m_capFwd[i], target);
-            }
-            else
-            {
-                m_capRev[i] = std::max(m_capRev[i], -target);
-            }
-        };
-
-        auto tightenOppose = [&](int i)
-        {
-            const float tSlip = std::fabs(sd.cmdAtReading[i]); // torque that caused slip
-            const float target = std::max(minT, tSlip * down);
-
-            if (assistSign > 0.f)
-            {
-                m_capRev[i] = std::max(m_capRev[i], -target);
-            }
-            else
-            {
-                m_capFwd[i] = std::min(m_capFwd[i], target);
-            }
-        };
-
         if (slipAccelerate)
-            tightenAssist(i);
+            tightenAssistCap(sd.cmdAtReading[i], assistSign, minT, TV.SlipDownFactor, m_capFwd[i], m_capRev[i]);
         if (slipOppose)
-            tightenOppose(i);
+            tightenOpposeCap(sd.cmdAtReading[i], assistSign, minT, TV.SlipDownFactor, m_capFwd[i], m_capRev[i]);
     }
 
     // Output for this tick (clamped to CURRENT live limits)
@@ -412,28 +455,16 @@ TorqueVectoring::SenseData TorqueVectoring::Sense(const TickContext &ctx, Gear c
 // ============================================================================
 void TorqueVectoring::ApplySpeedLimiter(const TickContext& ctx, Gear currGear, SenseData& sd)
 {
-    const float band = ctx.params->TV.SpeedLimiterFadeBand;
+    const auto& TV = ctx.params->TV;
+    const float band = TV.SpeedLimiterFadeBand;
     if (band <= 1e-3f)
         return;
 
     const float vRef = sd.vehicleSpeedAbs;
-    const float vMax = (currGear == Gear::D) ? ctx.params->TV.maxSpeedFwd : ctx.params->TV.maxSpeedRev;
+    const float vMax = (currGear == Gear::D) ? TV.maxSpeedFwd : TV.maxSpeedRev;
     const float vStart = vMax - band;
-    const float vEps = ctx.params->TV.SlipSpeedEps;
-    const float minT = ctx.params->TV.SlipMinTorque;
-
-    // Outlier threshold uses existing ASR parameter (no new params)
-    const float hiOutlier = vRef * (1.f + ctx.params->TV.SlipRatio);
-
-    auto capFromSpeed = [&](float vForCap) -> float
-    {
-        if (vForCap <= vStart) return ctx.params->TV.maxTorqueDrive;
-        if (vForCap >= vMax)   return 0.f;
-
-        const float u = (vForCap - vStart) / band; // 0..1
-        return ctx.params->TV.maxTorqueDrive * (1.f - std::clamp(u, 0.f, 1.f));
-    };
-
+    const float hiOutlier = vRef * (1.f + TV.SlipRatio);
+    
     for (int i = 0; i < 4; ++i)
     {
         // Use vehicle reference unless this wheel is clearly an outlier near the cap.
@@ -445,7 +476,8 @@ void TorqueVectoring::ApplySpeedLimiter(const TickContext& ctx, Gear currGear, S
         //  1) we're moving (vRef above noise floor)
         //  2) the wheel is significantly faster than the vehicle (outlier)
         //  3) we're in/near the limiter band (otherwise don't mess with it)
-        if (vRef > vEps)
+        
+        if (vRef > TV.SlipSpeedEps)
         {
             if (wi > hiOutlier && wi > vStart)
                 vForCap = wi;
@@ -453,17 +485,17 @@ void TorqueVectoring::ApplySpeedLimiter(const TickContext& ctx, Gear currGear, S
 
         // Tightens the propulsion-side envelope (sign = gearDir)
         // Does not touch the opposite-side envelope (used for braking / opposing torque)
-        const float capTarget = capFromSpeed(vForCap);
+        const float capTarget = capFromSpeed(vForCap, vStart, vMax, TV.maxTorqueDrive);
 
         if (sd.gearDir > 0.f)
         {
             sd.capFwd[i] = std::min(sd.capFwd[i], capTarget);
-            sd.capFwd[i] = std::max(sd.capFwd[i], minT);
+            sd.capFwd[i] = std::max(sd.capFwd[i], TV.SlipMinTorque);
         }
         else
         {
             sd.capRev[i] = std::max(sd.capRev[i], -capTarget);
-            sd.capRev[i] = std::min(sd.capRev[i], -minT);
+            sd.capRev[i] = std::min(sd.capRev[i], -TV.SlipMinTorque);
         }
     }
 }
@@ -573,63 +605,30 @@ TorqueVectoring::TrajectoryIntent TorqueVectoring::ComputeTrajectoryIntent(
     float TcR_req = Tc_total_req * (1.f - frontShare);
 
     // === Front steering differential ===
-    float TdF_req = 0.f;
-    {
-        const float vFrontAbs = AxleSpeedAbs(sense, FL, FR);
-        float uf = (TV.SteerTorqueHighSpeed > 1.f) ? (vFrontAbs / TV.SteerTorqueHighSpeed) : 1.f;
-        uf = std::clamp(uf, 0.f, 1.f);
-        const float kSteer = std::lerp(TV.SteerTorqueLowFactor, TV.SteerTorqueHighFactor, uf);
-        TdF_req = s * TV.SteerTorqueFront * kSteer;
-    }
+    const float vFrontAbs = AxleSpeedAbs(sense, FL, FR);
+    float TdF_req = computeFrontSteeringDiff(
+        s, vFrontAbs,
+        TV.SteerTorqueHighSpeed, TV.SteerTorqueLowFactor,
+        TV.SteerTorqueHighFactor, TV.SteerTorqueFront);
 
     // === Rear yaw assist differential (only in D) ===
     float TdR_req = 0.f;
     if (currGear == Gear::D && absS > 0.001f)
     {
         const float vRearAbs = AxleSpeedAbs(sense, RL, RR);
-
-        float us = 1.f;
-        if (TV.RearFadeSpeed1 > TV.RearFadeSpeed0) {
-            us = (vRearAbs - TV.RearFadeSpeed0) / (TV.RearFadeSpeed1 - TV.RearFadeSpeed0);
-            us = std::clamp(us, 0.f, 1.f);
-        }
-
-        const float rearEffAbs = std::fabs(TcR_req);
-        const float t0 = TV.RearFadeTorque0;
-        const float t1 = TV.RearFadeTorque1;
-
-        float uLong = 1.f;
-        if (t1 > t0) {
-            uLong = (rearEffAbs - t0) / (t1 - t0);
-            uLong = std::clamp(uLong, 0.f, 1.f);
-        }
-
-        // TODO: Could be a params.TV configuration
-        const float s0 = 0.05f;
-        const float s1 = 0.25f;
-        float uSteer = (absS - s0) / (s1 - s0);
-        uSteer = std::clamp(uSteer, 0.f, 1.f);
-
-        const float fadeRear = us * std::max(uLong, uSteer);
-
-        const float oppMag = absS * TV.SteerTorqueRear;
-
-        // SIGN: s>0 => TdR>0 => RR reduced / can go negative
-        //       s<0 => TdR<0 => RL reduced / can go negative
-        TdR_req = (s > 0.f) ? (+oppMag) : (-oppMag);
-        TdR_req *= fadeRear;
+        TdR_req = computeRearYawAssist(
+            s, absS, vRearAbs, std::fabs(TcR_req),
+            TV.RearFadeSpeed0, TV.RearFadeSpeed1,
+            TV.RearFadeTorque0, TV.RearFadeTorque1,
+            TV.SteerTorqueRear);
     }
 
     // === Rate limit steering/yaw differentials ===
-    {
-        const float maxD = TV.MaxTorquePerTick;
+    TdF_req = rateLimit(TdF_req, m_lastTdF, TV.MaxTorquePerTick);
+    m_lastTdF = TdF_req;
 
-        TdF_req = rateLimit(TdF_req, m_lastTdF, maxD);
-        m_lastTdF = TdF_req;
-
-        TdR_req = rateLimit(TdR_req, m_lastTdR, maxD);
-        m_lastTdR = TdR_req;
-    }
+    TdR_req = rateLimit(TdR_req, m_lastTdR, TV.MaxTorquePerTick);
+    m_lastTdR = TdR_req;
 
     return { Tc_total_req, TcF_req, TcR_req, TdF_req, TdR_req };
 }
