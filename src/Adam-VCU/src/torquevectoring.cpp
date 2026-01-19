@@ -504,43 +504,40 @@ float TorqueVectoring::AxleSpeedAbs(const SenseData& s, Wheel L, Wheel R)
 
 
 // -----------------
-// Compute()
+// ComputeTrajectoryIntent()
 // -----------------
-TorqueVectoring::Torques TorqueVectoring::Compute(const TickContext& ctx, const Gear& currGear)
+// Computes the driver's trajectory intent:
+// - Longitudinal torque request split between front/rear axles
+// - Front steering differential
+// - Rear yaw assist differential
+// - Rate limits applied to differentials
+TorqueVectoring::TrajectoryIntent TorqueVectoring::ComputeTrajectoryIntent(
+    const TickContext& ctx, const SenseData& sense, Gear currGear)
 {
-    Torques out{};
-    if (currGear == Gear::N || !ctx.params) return out;
-
     const auto& TV = ctx.params->TV;
-
-    // ========= Stage 0: Sense (vehicle speed + caps) =========
-    const SenseData sense = Sense(ctx, currGear);
-    out.vehicleSpeedAbs = sense.vehicleSpeedAbs;
     const float vRefAbs = sense.vehicleSpeedAbs;
 
-    // ========= Stage 1: Normalize user inputs =========
+    // === Normalize user inputs ===
     const float s = static_cast<float>(ctx.user.steering) / 1000.0f;   // convention: -left, +right
     const float absS = std::fabs(s);
 
     const float maxDrive = TV.maxTorqueDrive;
     const float maxBrake = TV.maxTorqueBrake;
 
-    // requested magnitude in "torque units"
+    // Requested magnitude in "torque units"
     const float maxT = (ctx.user.throttle >= 0) ? maxDrive : maxBrake;
     const float throttleInput = static_cast<float>(ctx.user.throttle) * maxT / 1000.0f;
 
-    // ========= Stage 2: Trajectory intent (Tc_total + TdF + TdR) =========
-    // Longitudinal intent:
+    // === Longitudinal intent ===
     float Tc_total_req = 0.f;
 
     if (throttleInput >= 0.f) {
-        // drive in gear direction
+        // Drive in gear direction
         Tc_total_req = throttleInput;
     }
     else
     {
         const float bmag = -throttleInput; // positive magnitude
-
 
         float brakeScale = 1.f;
         if (TV.AntiReversingSpeed > 1.f)
@@ -552,7 +549,7 @@ TorqueVectoring::Torques TorqueVectoring::Compute(const TickContext& ctx, const 
         Tc_total_req = (-msAlongGear) * bmag * brakeScale;
     }
 
-    // front/rear bias based on |Tc_total_req| (absolute torque ramp)
+    // === Front/rear bias ===
     const float TcAbs = std::fabs(Tc_total_req);
 
     // Pick ramp end-point depending on drive vs brake
@@ -575,22 +572,7 @@ TorqueVectoring::Torques TorqueVectoring::Compute(const TickContext& ctx, const 
     float TcF_req = Tc_total_req * frontShare;
     float TcR_req = Tc_total_req * (1.f - frontShare);
 
-    // front steering differential (primary steering actuator)
-    {
-        const float vFrontAbs = AxleSpeedAbs(sense, FL, FR);
-        float uf = (TV.SteerTorqueHighSpeed > 1.f) ? (vFrontAbs / TV.SteerTorqueHighSpeed) : 1.f;
-        uf = std::clamp(uf, 0.f, 1.f);
-
-        // SIGN: s<0 => Td<0 => FR gets more torque
-        //       s>0 => Td>0 => FL gets more torque
-        // Pair convention: FL = Tc + Td, FR = Tc - Td
-        // NOTE: No clamping here; caps solver will clip if needed.
-        //       Optional rate limit later.
-        //       For now: pure intent.
-        // (If you later add steering authority fade, do it here.)
-        // ----
-        // TdF_req:
-    }
+    // === Front steering differential ===
     float TdF_req = 0.f;
     {
         const float vFrontAbs = AxleSpeedAbs(sense, FL, FR);
@@ -600,7 +582,7 @@ TorqueVectoring::Torques TorqueVectoring::Compute(const TickContext& ctx, const 
         TdF_req = s * TV.SteerTorqueFront * kSteer;
     }
 
-    // rear yaw assist differential (only in D)
+    // === Rear yaw assist differential (only in D) ===
     float TdR_req = 0.f;
     if (currGear == Gear::D && absS > 0.001f)
     {
@@ -638,27 +620,43 @@ TorqueVectoring::Torques TorqueVectoring::Compute(const TickContext& ctx, const 
         TdR_req *= fadeRear;
     }
 
-    // ========= Stage 2b: Rate limit steering/yaw differentials ONLY =========
+    // === Rate limit steering/yaw differentials ===
     {
-        const float maxD = TV.MaxTorquePerTick; // absolute torque per tick
+        const float maxD = TV.MaxTorquePerTick;
 
-        // Front steering diff always limited
         TdF_req = rateLimit(TdF_req, m_lastTdF, maxD);
         m_lastTdF = TdF_req;
 
-        // Rear yaw assist diff limited too (even if it's 0 in R)
         TdR_req = rateLimit(TdR_req, m_lastTdR, maxD);
         m_lastTdR = TdR_req;
     }
 
-    // ========= Stage 3: Solve axle pairs under caps (keep Td) =========
-    const float TcF_req_m = sense.gearDir * TcF_req;
-    const float TcR_req_m = sense.gearDir * TcR_req;
+    return { Tc_total_req, TcF_req, TcR_req, TdF_req, TdR_req };
+}
+
+
+// -----------------
+// SolveWheelTorques()
+// -----------------
+// Solves for individual wheel torques under slip envelope constraints:
+// - Converts trajectory intent to motor coordinates
+// - Solves axle pairs prioritizing differential (steering) over common (longitudinal)
+// - Rebalances longitudinal torque across axles when one hits its cap
+// - Applies hard clamp to final values
+TorqueVectoring::WheelTorques TorqueVectoring::SolveWheelTorques(
+    const TickContext& ctx, const SenseData& sense, const TrajectoryIntent& intent)
+{
+    const auto& TV = ctx.params->TV;
+
+    // Convert to motor coordinates
+    const float TcF_req_m = sense.gearDir * intent.TcF;
+    const float TcR_req_m = sense.gearDir * intent.TcR;
 
     // Td must NOT be flipped (otherwise steering mirrors in reverse)
-    const float TdF_req_m = TdF_req;
-    const float TdR_req_m = TdR_req;
+    const float TdF_req_m = intent.TdF;
+    const float TdR_req_m = intent.TdR;
 
+    // Solve axle pairs under caps (prioritize Td)
     PairSolve front = SolvePairCaps(
         TcF_req_m, TdF_req_m,
         sense.capRev[FL], sense.capFwd[FL],
@@ -669,10 +667,8 @@ TorqueVectoring::Torques TorqueVectoring::Compute(const TickContext& ctx, const 
         sense.capRev[RL], sense.capFwd[RL],
         sense.capRev[RR], sense.capFwd[RR]);
 
-
-    // ========= Stage 4: Preserve trajectory as much as possible by reallocating Tc =========
-    // Keep Td fixed; move missing longitudinal torque into any axle that still has Tc headroom.
-    const float Tc_total_req_m = sense.gearDir * Tc_total_req;
+    // Preserve trajectory: rebalance Tc across axles when one hits its cap
+    const float Tc_total_req_m = sense.gearDir * intent.Tc_total;
     const float Tc_done_m = front.Tc + rear.Tc;
     float need = Tc_total_req_m - Tc_done_m;
 
@@ -701,25 +697,42 @@ TorqueVectoring::Torques TorqueVectoring::Compute(const TickContext& ctx, const 
             rear.L  = rear.Tc  + rear.Td;
             rear.R  = rear.Tc  - rear.Td;
         }
-        // else: nowhere to put it; accept deficit
     }
 
-    // --- wheel torques in MOTOR coords ---
-    float fl_m = front.L;
-    float fr_m = front.R;
-    float rl_m = rear.L;
-    float rr_m = rear.R;
+    // Hard clamp (motor coords)
+    const float hard = std::max(TV.maxTorqueDrive, TV.maxTorqueBrake);
 
-    // hard clamp (motor coords)
-    const float hard = std::max(maxDrive, maxBrake);
-    fl_m = std::clamp(fl_m, -hard, +hard);
-    fr_m = std::clamp(fr_m, -hard, +hard);
-    rl_m = std::clamp(rl_m, -hard, +hard);
-    rr_m = std::clamp(rr_m, -hard, +hard);
-
-    out.fl = (int16_t)fl_m;
-    out.fr = (int16_t)fr_m;
-    out.rl = (int16_t)rl_m;
-    out.rr = (int16_t)rr_m;
+    WheelTorques out;
+    out.fl = std::clamp(front.L, -hard, +hard);
+    out.fr = std::clamp(front.R, -hard, +hard);
+    out.rl = std::clamp(rear.L,  -hard, +hard);
+    out.rr = std::clamp(rear.R,  -hard, +hard);
     return out;
+}
+
+
+// -----------------
+// Compute()
+// -----------------
+TorqueVectoring::Torques TorqueVectoring::Compute(const TickContext& ctx, const Gear& currGear)
+{
+    if (currGear == Gear::N || !ctx.params) return {};
+
+    // === SENSE ===
+    const SenseData sense = Sense(ctx, currGear);
+
+    // === TRAJECTORY INTENT ===
+    const TrajectoryIntent intent = ComputeTrajectoryIntent(ctx, sense, currGear);
+
+    // === SOLVE CONSTRAINTS ===
+    const WheelTorques torques = SolveWheelTorques(ctx, sense, intent);
+
+    // === OUTPUT ===
+    return {
+        static_cast<int16_t>(torques.fl),
+        static_cast<int16_t>(torques.fr),
+        static_cast<int16_t>(torques.rl),
+        static_cast<int16_t>(torques.rr),
+        sense.vehicleSpeedAbs
+    };
 }

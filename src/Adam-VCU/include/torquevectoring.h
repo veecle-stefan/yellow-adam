@@ -71,6 +71,24 @@ protected:
     void UpdateSlipEnvelopes(const TickContext& ctx, SenseData& sd, const SenseContext& sc);
     void ApplySpeedLimiter(const TickContext& ctx, Gear currGear, SenseData& sd);
 
+    // ---- Trajectory intent computation
+    struct TrajectoryIntent {
+        float Tc_total = 0.f; // Total longitudinal torque request (gear space)
+        float TcF = 0.f;      // Front common torque request (gear space)
+        float TcR = 0.f;      // Rear common torque request (gear space)
+        float TdF = 0.f;      // Front differential torque request
+        float TdR = 0.f;      // Rear differential torque request
+    };
+
+    TrajectoryIntent ComputeTrajectoryIntent(const TickContext& ctx, const SenseData& sense, Gear currGear);
+
+    // ---- Wheel torque solving
+    struct WheelTorques {
+        float fl = 0.f, fr = 0.f, rl = 0.f, rr = 0.f;
+    };
+
+    WheelTorques SolveWheelTorques(const TickContext& ctx, const SenseData& sense, const TrajectoryIntent& intent);
+
 
     struct PairSolve {
         float Tc=0.f, Td=0.f;
