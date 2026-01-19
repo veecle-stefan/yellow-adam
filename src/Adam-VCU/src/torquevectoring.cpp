@@ -331,30 +331,31 @@ void TorqueVectoring::UpdateSlipEnvelopes(const TickContext& ctx, SenseData& sd,
 
         auto tightenAssist = [&](int i)
         {
+            const float tSlip = std::fabs(sd.cmdAtReading[i]); // torque that caused slip
+            const float target = std::max(minT, tSlip * down);
+
             if (assistSign > 0.f)
             {
-                m_capFwd[i] *= down;
-                m_capFwd[i] = std::max(m_capFwd[i], minT);
+                m_capFwd[i] = std::min(m_capFwd[i], target);
             }
             else
             {
-                m_capRev[i] *= down;
-                m_capRev[i] = std::min(m_capRev[i], -minT);
+                m_capRev[i] = std::max(m_capRev[i], -target);
             }
         };
 
         auto tightenOppose = [&](int i)
         {
-            // opposeSign = -assistSign
+            const float tSlip = std::fabs(sd.cmdAtReading[i]); // torque that caused slip
+            const float target = std::max(minT, tSlip * down);
+
             if (assistSign > 0.f)
             {
-                m_capRev[i] *= down;
-                m_capRev[i] = std::min(m_capRev[i], -minT);
+                m_capRev[i] = std::max(m_capRev[i], -target);
             }
             else
             {
-                m_capFwd[i] *= down;
-                m_capFwd[i] = std::max(m_capFwd[i], minT);
+                m_capFwd[i] = std::min(m_capFwd[i], target);
             }
         };
 
