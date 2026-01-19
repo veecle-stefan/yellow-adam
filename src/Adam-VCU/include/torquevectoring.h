@@ -64,6 +64,13 @@ protected:
     // ---- Stage 0: sensing + caps update
     SenseData Sense(const TickContext& ctx, Gear currGear);
 
+    // ---- Sub-stages of Sense()
+    void ReadWheelSpeeds(const TickContext& ctx, SenseData& sd);
+    void ReadAxleSpeeds(const std::optional<Axle::HistoryFrame>& fb, SenseData& sd, int indexShift);
+    void EstimateVehicleMotion(const TickContext& ctx, SenseData& sd, struct SenseContext& sc);
+    void UpdateSlipEnvelopes(const TickContext& ctx, SenseData& sd, const SenseContext& sc);
+    void ApplySpeedLimiter(const TickContext& ctx, Gear currGear, SenseData& sd);
+
 
     struct PairSolve {
         float Tc=0.f, Td=0.f;

@@ -25,61 +25,81 @@ static inline float rateLimit(float target, float last, float maxDelta)
 }
 
 // ============================================================================
-// TorqueVectoring::Sense()
-// - Computes wheel speeds (abs + signed)
+// SenseContext: Internal working data for Sense() sub-methods
+// - Not part of the public Sense() output (SenseData)
+// - Lives only within Sense() scope
+// ============================================================================
+struct SenseContext
+{
+    // Motion intent derived from user input
+    bool accel = false;
+    bool brake = false;
+    
+    // Sorted wheel speeds (ascending by absSpeed)
+    WheelSpeed sorted[4] = {};
+    uint8_t numValid = 0;
+};
+
+// ============================================================================
+// TorqueVectoring::ReadAxleSpeeds()
+// - Reads wheel speeds for a single axle from motor feedback into SenseData
+// - Populates: ok[], w[], wAbs[], cmdAtReading[] for the given index pair
+// ============================================================================
+void TorqueVectoring::ReadAxleSpeeds(const std::optional<Axle::HistoryFrame>& fb, SenseData& sd, int indexShift)
+{
+    if (!fb) {
+        return;
+    }
+
+    sd.ok[indexShift] = true;
+    sd.ok[indexShift + 1] = true;
+
+    sd.w[indexShift] = static_cast<float>(fb->sample.speedL_meas);
+    sd.w[indexShift + 1] = static_cast<float>(fb->sample.speedR_meas);
+    sd.wAbs[indexShift] = fabs(sd.w[indexShift]);
+    sd.wAbs[indexShift + 1] = fabs(sd.w[indexShift + 1]);
+    sd.cmdAtReading[indexShift] = static_cast<float>(fb->sample.cmdL);
+    sd.cmdAtReading[indexShift + 1] = static_cast<float>(fb->sample.cmdR);
+}
+
+// ============================================================================
+// TorqueVectoring::ReadWheelSpeeds()
+// - Reads wheel speeds from motor feedback into SenseData
+// - Populates: ok[], w[], wAbs[], cmdAtReading[]
+// ============================================================================
+void TorqueVectoring::ReadWheelSpeeds(const TickContext& ctx, SenseData& sd)
+{
+    ReadAxleSpeeds(ctx.currFront, sd, 0);
+    ReadAxleSpeeds(ctx.currRear, sd, 2);
+}
+
+// ============================================================================
+// TorqueVectoring::EstimateVehicleMotion()
 // - Computes a robust vehicleSpeedAbs reference
 //   * accel: use 2nd smallest abs wheel speed  (reject fast spin outliers)
 //   * brake: use 2nd largest  abs wheel speed  (reject locked wheel outliers)
 //   * coast: use median abs wheel speed
 // - Persists m_vehicleSpeedAbs and rejects physically impossible jumps
-//   (hard reject, NOT "slow converge" into nonsense)
+// - Populates sc.sorted[], sc.numValid for downstream use
 // ============================================================================
-TorqueVectoring::SenseData TorqueVectoring::Sense(const TickContext &ctx, Gear currGear)
+void TorqueVectoring::EstimateVehicleMotion(const TickContext& ctx, SenseData& sd, SenseContext& sc)
 {
-    SenseData sd{};
-
-    // ----- read wheel speeds (signed) -----
-    auto setSpeeds = [](const std::optional<Axle::HistoryFrame> &fb, SenseData& d, int indexShift)
-    {
-        // caller guarantees fb has value if passed in, but keep it safe
-        if (!fb) {
-            return ;
-        }
-
-        d.ok[indexShift] = true;
-        d.ok[indexShift+1] = true;
-
-        d.w[indexShift] = static_cast<float>(fb->sample.speedL_meas);
-        d.w[indexShift + 1] = static_cast<float>(fb->sample.speedR_meas);
-        d.wAbs[indexShift] = fabs(d.w[indexShift]);
-        d.wAbs[indexShift+1] = fabs(d.w[indexShift+1]);
-        d.cmdAtReading[indexShift] = static_cast<float>(fb->sample.cmdL);
-        d.cmdAtReading[indexShift+1] = static_cast<float>(fb->sample.cmdR);
-    };
-
-    sd.gearDir = (currGear == Gear::D) ? +1.f : -1.f;
-    setSpeeds(ctx.currFront, sd, 0);
-    setSpeeds(ctx.currRear, sd, 2);
-
-    // Decide motion intent from requested throttleInput sign
-    const bool accel = (ctx.user.throttle > 0);
-    const bool brake = (ctx.user.throttle < 0);
-    const float vEps = ctx.params->TV.SlipSpeedEps;
-
     // Collect valid abs speeds for robust statistics WITH indices
-    WheelSpeed sorted[4];
-    uint8_t n = 0;
+    sc.numValid = 0;
     for (int i = 0; i < 4; ++i)
     {
         if (sd.ok[i])
         {
-            sorted[n].absSpeed = sd.wAbs[i];
-            sorted[n].index = i;
-            ++n;
+            sc.sorted[sc.numValid].absSpeed = sd.wAbs[i];
+            sc.sorted[sc.numValid].index = i;
+            ++sc.numValid;
         }
     }
 
-   sortSmallN(sorted, n);
+    sortSmallN(sc.sorted, sc.numValid);
+
+    const uint8_t n = sc.numValid;
+    const float vEps = ctx.params->TV.SlipSpeedEps;
 
     // Helper: sign of a specific wheel in MOTOR coords
     auto wheelSign = [&](int idx) -> int
@@ -106,54 +126,54 @@ TorqueVectoring::SenseData TorqueVectoring::Sense(const TickContext &ctx, Gear c
     }
     else
     {
-        if (accel)
+        if (sc.accel)
         {
             // 2nd smallest (reject fast spinner); for n==1 fallback to smallest
             const int pick = (n >= 2) ? 1 : 0;
-            v_ref_meas = sorted[pick].absSpeed;
-            refWheelIdx = sorted[pick].index;
+            v_ref_meas = sc.sorted[pick].absSpeed;
+            refWheelIdx = sc.sorted[pick].index;
         }
-        else if (brake)
+        else if (sc.brake)
         {
             // 2nd largest (reject locked); for n==1 fallback to largest
             const int pick = (n >= 2) ? (n - 2) : (n - 1);
-            v_ref_meas = sorted[pick].absSpeed;
-            refWheelIdx = sorted[pick].index;
+            v_ref_meas = sc.sorted[pick].absSpeed;
+            refWheelIdx = sc.sorted[pick].index;
         }
         else
         {
             // Coasting: median abs speed
             if (n == 1)
             {
-                v_ref_meas = sorted[0].absSpeed;
-                refWheelIdx = sorted[0].index;
+                v_ref_meas = sc.sorted[0].absSpeed;
+                refWheelIdx = sc.sorted[0].index;
             }
             else if (n == 2)
             {
-                v_ref_meas = 0.5f * (sorted[0].absSpeed + sorted[1].absSpeed);
+                v_ref_meas = 0.5f * (sc.sorted[0].absSpeed + sc.sorted[1].absSpeed);
 
                 // SIGN: only if both wheels agree, else unknown
-                const int s0 = wheelSign(sorted[0].index);
-                const int s1 = wheelSign(sorted[1].index);
+                const int s0 = wheelSign(sc.sorted[0].index);
+                const int s1 = wheelSign(sc.sorted[1].index);
                 if (s0 != 0 && s0 == s1)
-                    refWheelIdx = sorted[0].index; // any of them is fine; they agree
+                    refWheelIdx = sc.sorted[0].index; // any of them is fine; they agree
                 else
                     refWheelIdx = -1; // force fallback
             }
             else if (n == 3)
             {
-                v_ref_meas = sorted[1].absSpeed;
-                refWheelIdx = sorted[1].index;
+                v_ref_meas = sc.sorted[1].absSpeed;
+                refWheelIdx = sc.sorted[1].index;
             }
             else // n == 4
             {
-                v_ref_meas = 0.5f * (sorted[1].absSpeed + sorted[2].absSpeed);
+                v_ref_meas = 0.5f * (sc.sorted[1].absSpeed + sc.sorted[2].absSpeed);
 
                 // SIGN: middle-two must agree, else unknown
-                const int s1 = wheelSign(sorted[1].index);
-                const int s2 = wheelSign(sorted[2].index);
+                const int s1 = wheelSign(sc.sorted[1].index);
+                const int s2 = wheelSign(sc.sorted[2].index);
                 if (s1 != 0 && s1 == s2)
-                    refWheelIdx = sorted[1].index; // any of the two is fine
+                    refWheelIdx = sc.sorted[1].index; // any of the two is fine
                 else
                     refWheelIdx = -1; // force fallback
             }
@@ -176,11 +196,11 @@ TorqueVectoring::SenseData TorqueVectoring::Sense(const TickContext &ctx, Gear c
 
     if (m_vehicleSpeedAbs < vEps)
     {
-        if (accel)
+        if (sc.accel)
         {
             // At standstill under acceleration: trust the slow end hard.
             if (n > 0)
-                v_ref_meas = sorted[0].absSpeed; // smallest abs speed
+                v_ref_meas = sc.sorted[0].absSpeed; // smallest abs speed
             // motionSign stays as computed (may be 0) -> fallback logic downstream
         }
         else // if braking or coasting
@@ -190,6 +210,7 @@ TorqueVectoring::SenseData TorqueVectoring::Sense(const TickContext &ctx, Gear c
         }
     }
 
+    // Rate-limit vehicle speed changes to reject physically impossible jumps
     const float dv = v_ref_meas - m_vehicleSpeedAbs;
     if (dv > ctx.params->TV.maxRealisticAccel)
     {
@@ -208,19 +229,26 @@ TorqueVectoring::SenseData TorqueVectoring::Sense(const TickContext &ctx, Gear c
     sd.vehicleSpeedAbs = m_vehicleSpeedAbs;
     sd.motionSign = motionSign; // motor-coord sign; downstream can fallback if 0
     sd.motionSignAlongGear = (fabs(sd.motionSign) > 0.5f) ? (sd.motionSign * sd.gearDir) : 0.f;
+}
 
-    // now ABS/ASR envelope based on last wheel speeds
-    // =========================
-    // ASR/ABS torque envelopes per wheel (persistent, updated each tick)
-    // =========================
-
+// ============================================================================
+// TorqueVectoring::UpdateSlipEnvelopes()
+// - ASR/ABS torque envelopes per wheel (persistent, updated each tick)
+// - Recovers envelopes towards hard limits each tick
+// - Detects slip conditions and tightens envelopes accordingly
+// - Outputs: sd.capFwd[], sd.capRev[]
+// ============================================================================
+void TorqueVectoring::UpdateSlipEnvelopes(const TickContext& ctx, SenseData& sd, const SenseContext& sc)
+{
     const float vRef = m_vehicleSpeedAbs;
+    const float vEps = ctx.params->TV.SlipSpeedEps;
     const float slipRatio = ctx.params->TV.SlipRatio;
     const float down = ctx.params->TV.SlipDownFactor;
     const float recover = ctx.params->TV.SlipRecoverTorquePerTick;
     const float minT = ctx.params->TV.SlipMinTorque;
     const float hard = std::max(ctx.params->TV.maxTorqueDrive, ctx.params->TV.maxTorqueBrake);
 
+    // Initialize caps on first run
     if (!m_capsInit)
     {
         for (int i = 0; i < 4; i++)
@@ -231,7 +259,7 @@ TorqueVectoring::SenseData TorqueVectoring::Sense(const TickContext &ctx, Gear c
         m_capsInit = true;
     }
 
-    // recover towards +/- hard
+    // Recover towards +/- hard
     for (int i = 0; i < 4; i++)
     {
         m_capFwd[i] = std::min(m_capFwd[i] + recover, +hard);
@@ -243,7 +271,7 @@ TorqueVectoring::SenseData TorqueVectoring::Sense(const TickContext &ctx, Gear c
 
     // Anchor wheel: at least one wheel is basically not moving.
     // This is the condition under which "standstill slip" is meaningful.
-    const bool hasAnchor = (n > 0) && (sorted[0].absSpeed < vEps);
+    const bool hasAnchor = (sc.numValid > 0) && (sc.sorted[0].absSpeed < vEps);
     const bool moving = (std::fabs(sd.motionSign) > 0.5f);
     const float assistSign = moving ? sd.motionSign : sd.gearDir;
     
@@ -288,8 +316,6 @@ TorqueVectoring::SenseData TorqueVectoring::Sense(const TickContext &ctx, Gear c
         }
         else
         {
-            
-
             // braking/opposing torque = opposes motion (only meaningful if moving)
             const float hi = vRef * (1.f + slipRatio);
             const float lo = vRef * (1.f - slipRatio);
@@ -344,78 +370,101 @@ TorqueVectoring::SenseData TorqueVectoring::Sense(const TickContext &ctx, Gear c
         sd.capFwd[i] = std::clamp(m_capFwd[i], minT, +hard);
         sd.capRev[i] = std::clamp(m_capRev[i], -hard, -minT);
     }
+}
 
-    // =========================================================================
-    // Speed limiter as an envelope modifier (NOT throttle scaling)
-    //
-    // Goal:
-    //  - Prevent overspeed without oscillating (no "hit limit -> drop torque -> recover -> repeat")
-    //  - Do NOT kill cornering at the reverse speed cap:
-    //      * Use robust vehicle speed as the primary reference
-    //      * Only apply per-wheel speed capping if a wheel is an outlier (spinner)
-    //
-    // Effect:
-    //  - Tightens sd.capFwd[i] (drive torque) when near/above speed limit.
-    //  - Does NOT touch braking envelopes (capRev), because braking is how you slow down.
-    // =========================================================================
+// ============================================================================
+// TorqueVectoring::Sense()
+// - Orchestrates sensing sub-stages
+// - Returns SenseData for use by Compute()
+// ============================================================================
+TorqueVectoring::SenseData TorqueVectoring::Sense(const TickContext &ctx, Gear currGear)
+{
+    SenseData sd{};
+    sd.gearDir = (currGear == Gear::D) ? +1.f : -1.f;
 
-    const float band = ctx.params->TV.SpeedLimiterFadeBand;
-    if (band > 1e-3f)
-    {
-        const float vRef = sd.vehicleSpeedAbs;
+    // Initialize internal working context
+    SenseContext sc{};
+    sc.accel = (ctx.user.throttle > 0);
+    sc.brake = (ctx.user.throttle < 0);
 
-        const float vMax   = (currGear == Gear::D) ? ctx.params->TV.maxSpeedFwd : ctx.params->TV.maxSpeedRev;
-        const float vStart = vMax - band;
+    // === STAGE 1: Read Wheel Speeds ===
+    ReadWheelSpeeds(ctx, sd);
 
-        // Outlier threshold uses existing ASR parameter (no new params)
-        const float hiOutlier = vRef * (1.f + ctx.params->TV.SlipRatio);
-        const float vEps = ctx.params->TV.SlipSpeedEps;
+    // === STAGE 2: Estimate Vehicle Motion ===
+    EstimateVehicleMotion(ctx, sd, sc);
 
-        auto capFromSpeed = [&](float vForCap) -> float
-        {
-            if (vForCap <= vStart) return ctx.params->TV.maxTorqueDrive;
-            if (vForCap >= vMax)   return 0.f;
+    // === STAGE 3: Update Slip Envelopes ===
+    UpdateSlipEnvelopes(ctx, sd, sc);
 
-            const float u = (vForCap - vStart) / band; // 0..1
-            return ctx.params->TV.maxTorqueDrive * (1.f - std::clamp(u, 0.f, 1.f));
-        };
-
-        for (int i = 0; i < 4; ++i)
-        {
-            // Use vehicle reference unless this wheel is clearly an outlier near the cap.
-            float vForCap = vRef;
-
-            const float wi = sd.wAbs[i];
-
-            // Only treat wheel speed as authoritative when:
-            //  1) we're moving (vRef above noise floor)
-            //  2) the wheel is significantly faster than the vehicle (outlier)
-            //  3) we're in/near the limiter band (otherwise don't mess with it)
-            if (vRef > vEps)
-            {
-                if (wi > hiOutlier && wi > vStart)
-                    vForCap = wi;
-            }
-
-            // tightens the propulsion-side envelope (sign = gearDir)
-            // does not touch the opposite-side envelope (used for braking / opposing torque)
-            const float capTarget = capFromSpeed(vForCap);
-
-            if (sd.gearDir > 0.f)
-            {
-                sd.capFwd[i] = std::min(sd.capFwd[i], capTarget);
-                sd.capFwd[i] = std::max(sd.capFwd[i], minT);
-            }
-            else
-            {
-                sd.capRev[i] = std::max(sd.capRev[i], -capTarget);
-                sd.capRev[i] = std::min(sd.capRev[i], -minT);
-            }
-        }
-    }
-
+    // === STAGE 4: Apply Speed Limiter ===
+    ApplySpeedLimiter(ctx, currGear, sd);
 
     return sd;
+}
+
+// ============================================================================
+// TorqueVectoring::ApplySpeedLimiter()
+// - Speed limiter as an envelope modifier (NOT throttle scaling)
+// - Prevents overspeed without oscillating
+// - Tightens sd.capFwd[i] (drive torque) when near/above speed limit
+// - Does NOT touch braking envelopes (capRev)
+// ============================================================================
+void TorqueVectoring::ApplySpeedLimiter(const TickContext& ctx, Gear currGear, SenseData& sd)
+{
+    const float band = ctx.params->TV.SpeedLimiterFadeBand;
+    if (band <= 1e-3f)
+        return;
+
+    const float vRef = sd.vehicleSpeedAbs;
+    const float vMax = (currGear == Gear::D) ? ctx.params->TV.maxSpeedFwd : ctx.params->TV.maxSpeedRev;
+    const float vStart = vMax - band;
+    const float vEps = ctx.params->TV.SlipSpeedEps;
+    const float minT = ctx.params->TV.SlipMinTorque;
+
+    // Outlier threshold uses existing ASR parameter (no new params)
+    const float hiOutlier = vRef * (1.f + ctx.params->TV.SlipRatio);
+
+    auto capFromSpeed = [&](float vForCap) -> float
+    {
+        if (vForCap <= vStart) return ctx.params->TV.maxTorqueDrive;
+        if (vForCap >= vMax)   return 0.f;
+
+        const float u = (vForCap - vStart) / band; // 0..1
+        return ctx.params->TV.maxTorqueDrive * (1.f - std::clamp(u, 0.f, 1.f));
+    };
+
+    for (int i = 0; i < 4; ++i)
+    {
+        // Use vehicle reference unless this wheel is clearly an outlier near the cap.
+        float vForCap = vRef;
+
+        const float wi = sd.wAbs[i];
+
+        // Only treat wheel speed as authoritative when:
+        //  1) we're moving (vRef above noise floor)
+        //  2) the wheel is significantly faster than the vehicle (outlier)
+        //  3) we're in/near the limiter band (otherwise don't mess with it)
+        if (vRef > vEps)
+        {
+            if (wi > hiOutlier && wi > vStart)
+                vForCap = wi;
+        }
+
+        // Tightens the propulsion-side envelope (sign = gearDir)
+        // Does not touch the opposite-side envelope (used for braking / opposing torque)
+        const float capTarget = capFromSpeed(vForCap);
+
+        if (sd.gearDir > 0.f)
+        {
+            sd.capFwd[i] = std::min(sd.capFwd[i], capTarget);
+            sd.capFwd[i] = std::max(sd.capFwd[i], minT);
+        }
+        else
+        {
+            sd.capRev[i] = std::max(sd.capRev[i], -capTarget);
+            sd.capRev[i] = std::min(sd.capRev[i], -minT);
+        }
+    }
 }
 
 
