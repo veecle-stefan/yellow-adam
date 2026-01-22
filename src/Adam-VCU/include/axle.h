@@ -27,8 +27,8 @@ public:
     struct SerialFeedback
     {
         uint16_t start;
-        int16_t  cmdL;
         int16_t  cmdR;
+        int16_t  cmdL;
         int16_t  speedL_meas;
         int16_t  speedR_meas;
         int16_t  batVoltage;

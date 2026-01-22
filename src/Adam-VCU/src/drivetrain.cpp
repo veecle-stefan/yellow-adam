@@ -125,73 +125,97 @@ QueueHandle_t DriveTrain::GetStatusQueue() const
   return this->statusQueue;
 }
 
-
 // Centralised RC reading + double-tap detection.
-// Keeps state inside this function instead of spreading it over the control loop.
-DriveTrain::UserCmd DriveTrain::ReadUserCmd(RCinput::UserInput ch1, RCinput::UserInput ch2, RCinput::UserInput ch3, uint32_t nowMs)
+// Double-tap = two short brake "press->release" cycles within DoubleTapTimeMs.
+// Tap is counted on RELEASE, and only if press duration <= TapTimeMs.
+// Window starts at the first counted release.
+DriveTrain::UserCmd DriveTrain::ReadUserCmd(
+    RCinput::UserInput ch1, RCinput::UserInput ch2, RCinput::UserInput ch3, uint32_t nowMs)
 {
-    // --- double-tap state machine ---
-    static uint32_t firstTap = 0;
-    static uint32_t lastTap  = 0;
-    static bool     isTapping = false;
-    static uint8_t  tapCount  = 0;
+    struct TapFSM
+    {
+        bool pressed = false;
+        uint32_t pressMs = 0;
+
+        uint8_t taps = 0;
+        uint32_t windowStartMs = 0; // time of first counted release
+    };
+    static TapFSM fsm{};
     static bool lastAuxSign = false;
 
     UserCmd u{};
 
-    if (!ch1 || !ch2 || !ch3) {
-        // the value is not valid, user/signal not present or too old
-        u.throttle = -100; // safe defaults: light braking
-        u.steering = 0; // safe defaults: steer straight
+    // ---- Input validity / defaults ----
+    if (!ch1 || !ch2 || !ch3)
+    {
+        u.throttle = -100;
+        u.steering = 0;
         u.aux = 0;
         u.detected = false;
 
-        // reset tap detection
-        firstTap = lastTap = 0;
-        isTapping = false;
-        tapCount = 0;
-
+        // Reset tap FSM on signal loss
+        fsm = TapFSM{};
         return u;
-
-    } else {
-        // signals valid -> plug them in
-        u.throttle = *ch1;
-        u.steering = *ch3;
-        u.aux      = *ch2;
-        u.detected = true;
-
-        u.someInput = (abs(u.throttle) > SWConfig::InputFiltering::DeadBand) || (abs(u.steering) > SWConfig::InputFiltering::DeadBand);
-        bool auxSign = u.aux > SWConfig::InputFiltering::DeadBand;
-        if (auxSign != lastAuxSign) {
-            u.auxPressed = true; // only this tick
-        }
-        lastAuxSign = auxSign;
     }
 
-    
-    const bool braking = (u.throttle < -SWConfig::InputFiltering::DeadBand);
+    // ---- Populate user input ----
+    u.throttle = *ch1;
+    u.steering = *ch3;
+    u.aux = *ch2;
+    u.detected = true;
 
-    if (braking) {
-        if (!isTapping) {
-            isTapping = true;
-            lastTap = nowMs;
-            if (tapCount == 0) firstTap = lastTap;
-        }
-    } else if (isTapping) {
-        // released
-        if ((nowMs - lastTap) < SWConfig::UserBehaviour::TapTimeMs) {
-            tapCount++;
-            if ((nowMs - firstTap) < SWConfig::UserBehaviour::DoubleTapTimeMs)
+    u.someInput = (std::abs(u.throttle) > SWConfig::InputFiltering::DeadBand) ||
+                  (std::abs(u.steering) > SWConfig::InputFiltering::DeadBand);
+
+    const bool auxSign = (u.aux > SWConfig::InputFiltering::DeadBand);
+    if (auxSign != lastAuxSign)
+        u.auxPressed = true;
+    lastAuxSign = auxSign;
+
+    // ---- Double-tap on brake ----
+    const bool brakeDown = (u.throttle < -SWConfig::InputFiltering::DeadBand);
+
+    // Expire an unfinished sequence (even if we never get a clean 2nd tap)
+    if (fsm.taps > 0 && (nowMs - fsm.windowStartMs) > SWConfig::UserBehaviour::DoubleTapTimeMs)
+    {
+        fsm.taps = 0;
+        fsm.windowStartMs = 0;
+    }
+
+    // Edge detect brake press/release
+    if (brakeDown && !fsm.pressed)
+    {
+        // 'Press' edge
+        fsm.pressed = true;
+        fsm.pressMs = nowMs;
+    }
+    else if (!brakeDown && fsm.pressed)
+    {
+        // 'Release' edge
+        fsm.pressed = false;
+
+        const uint32_t heldMs = nowMs - fsm.pressMs;
+        if (heldMs <= SWConfig::UserBehaviour::TapTimeMs)
+        {
+            // Count this tap on release
+            if (fsm.taps == 0)
+                fsm.windowStartMs = nowMs;
+            fsm.taps++;
+
+            if (fsm.taps == 2 &&
+                (nowMs - fsm.windowStartMs) <= SWConfig::UserBehaviour::DoubleTapTimeMs)
             {
-                if (tapCount == 2) {
-                    u.doubleTap = true;
-                    tapCount = 0;
-                }
+                u.doubleTap = true;
+                fsm.taps = 0;
+                fsm.windowStartMs = 0;
             }
-        } else {
-            tapCount = 0;
         }
-        isTapping = false;
+        else
+        {
+            // Long press -> explicitly not part of any sequence
+            fsm.taps = 0;
+            fsm.windowStartMs = 0;
+        }
     }
 
     return u;
@@ -354,8 +378,8 @@ void DriveTrain::CheckGear(const TickContext& ctx, VehicleState& state)
     if (!ctx.user.detected) {
         // reset to neutral after first standstill
         int16_t speed = 0;
-        if (ctx.currFront) speed = max(ctx.currFront->sample.speedL_meas, ctx.currFront->sample.speedR_meas);
-        if (ctx.currRear) speed = max(speed, max(ctx.currRear->sample.speedL_meas, ctx.currRear->sample.speedR_meas));
+        if (ctx.currFront) speed = max(abs(ctx.currFront->sample.speedL_meas), abs(ctx.currFront->sample.speedR_meas));
+        if (ctx.currRear) speed = max(speed, static_cast<int16_t>(max(abs(ctx.currRear->sample.speedL_meas), abs(ctx.currRear->sample.speedR_meas))));
         if (speed == 0) {
             state.currGear = Gear::N; // switch to N if standstill or no motor feedback from any controller
         }
@@ -455,6 +479,8 @@ void DriveTrain::PublishStatus(const TickContext& ctx, const TickDecision& dec, 
     st.curr_fr = lastFrontFb->sample.currR_meas;
     st.vel_fl  = lastFrontFb->sample.speedL_meas;
     st.vel_fr  = lastFrontFb->sample.speedR_meas;
+    st.cmd_fl  = lastFrontFb->sample.cmdL;
+    st.cmd_fr  = lastFrontFb->sample.cmdR;
     st.voltage_front = lastFrontFb->sample.batVoltage;
     st.temp_front    = lastFrontFb->sample.boardTemp;
   }
@@ -464,6 +490,8 @@ void DriveTrain::PublishStatus(const TickContext& ctx, const TickDecision& dec, 
     st.curr_rr = lastRearFb->sample.currR_meas;
     st.vel_rl  = lastRearFb->sample.speedL_meas;
     st.vel_rr  = lastRearFb->sample.speedR_meas;
+    st.cmd_rl  = lastRearFb->sample.cmdL;
+    st.cmd_rr  = lastRearFb->sample.cmdR;
     st.voltage_rear = lastRearFb->sample.batVoltage;
     st.temp_rear    = lastRearFb->sample.boardTemp;
   }

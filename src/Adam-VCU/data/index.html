@@ -84,9 +84,11 @@
       flex-wrap:wrap;
       margin-bottom:10px;
     }
-    .drivePadHeader .padHint{
-      font-size: 12px;
-      opacity: 0.75;
+    .drivePadHeader .padSpeed{
+      font-size: 14px;
+      opacity: 1.0;
+      color: #4444ff;
+      font-weight: 500;
     }
     /* ---- Buttons ---- */
     .btns{ display:grid; grid-template-columns: repeat(5, 1fr); gap:8px; }
@@ -228,7 +230,7 @@
   <div class="drivePadHeader">
     <button id="btn_take_control" class="btnPrimary" type="button">Take control</button>
     <button id="btn_stop_control" class="btnDanger" type="button" style="display:none;">Stop control</button>
-    <div class="padHint" id="pad_hint">Enables joystick control (touch + drag)</div>
+    <div class="padSpeed" id="pad_speed">0 km/h</div>
   </div>
 
   <div id="drivePad" class="drivepad"></div>

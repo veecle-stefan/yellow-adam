@@ -140,22 +140,23 @@ size_t JSONInteraction::EncodeStatusJson(const DriveTrainStatus& st, char* buffe
 
   // Keep schema stable: always emit all keys.
   bool ok =
-    appendf(buffer, bufferSize, used,
-      "{\"type\":\"status\""
-      ",\"t\":%d,\"s\":%d"
-      ",\"torque\":{\"fl\":%d,\"fr\":%d,\"rl\":%d,\"rr\":%d}"
-      ",\"curr\":{\"fl\":%d,\"fr\":%d,\"rl\":%d,\"rr\":%d}"
-      ",\"vel\": {\"fl\":%d,\"fr\":%d,\"rl\":%d,\"rr\":%d}"
-      ",\"boards\":{\"vf\":%u,\"vr\":%u,\"tf\":%u,\"tr\":%u}"
-      ",\"vehicle\":{\"gear\":\"%c\",\"low\":%s,\"high\":%s,\"il\":%s,\"ir\":%s}"
-      "}",
-      (int)st.throttle, (int)st.steering, // t:, s:, 
-      (int)st.tq_fl, (int)st.tq_fr, (int)st.tq_rl, (int)st.tq_rr, // torque {},
-      (int)st.curr_fl, (int)st.curr_fr, (int)st.curr_rl, (int)st.curr_rr, // curr {},
-      (int)st.vel_fl,  (int)st.vel_fr,  (int)st.vel_rl,  (int)st.vel_rr, // vel {},
-      (unsigned int)st.voltage_front, (unsigned int)st.voltage_rear, (unsigned int)st.temp_front, (unsigned int)st.temp_rear,
-      gearName[st.state.currGear], jb(st.state.loBeam), jb(st.state.hiBeam), jb(st.state.indicatorsL), jb(st.state.indicatorsR)
-    );
+      appendf(buffer, bufferSize, used,
+              "{\"type\":\"status\""
+              ",\"t\":%d,\"s\":%d"
+              ",\"torque\":{\"fl\":%d,\"fr\":%d,\"rl\":%d,\"rr\":%d}"
+              ",\"curr\":{\"fl\":%d,\"fr\":%d,\"rl\":%d,\"rr\":%d}"
+              ",\"cmd\": {\"fl\":%d,\"fr\":%d,\"rl\":%d,\"rr\":%d}"
+              ",\"vel\": {\"fl\":%d,\"fr\":%d,\"rl\":%d,\"rr\":%d}"
+              ",\"boards\":{\"vf\":%u,\"vr\":%u,\"tf\":%u,\"tr\":%u}"
+              ",\"vehicle\":{\"gear\":\"%c\",\"low\":%s,\"high\":%s,\"il\":%s,\"ir\":%s}"
+              "}",
+              (int)st.throttle, (int)st.steering,                                 // t:, s:,
+              (int)st.tq_fl, (int)st.tq_fr, (int)st.tq_rl, (int)st.tq_rr,         // torque {},
+              (int)st.curr_fl, (int)st.curr_fr, (int)st.curr_rl, (int)st.curr_rr, // curr {},
+              (int)st.cmd_fl, (int)st.cmd_fr, (int)st.cmd_rl, (int)st.cmd_rr,     // cmd {},
+              (int)st.vel_fl, (int)st.vel_fr, (int)st.vel_rl, (int)st.vel_rr,     // vel {},
+              (unsigned int)st.voltage_front, (unsigned int)st.voltage_rear, (unsigned int)st.temp_front, (unsigned int)st.temp_rear,
+              gearName[st.state.currGear], jb(st.state.loBeam), jb(st.state.hiBeam), jb(st.state.indicatorsL), jb(st.state.indicatorsR));
 
   if (!ok) return 0;
   return used;

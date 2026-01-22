@@ -732,6 +732,6 @@ TorqueVectoring::Torques TorqueVectoring::Compute(const TickContext& ctx, const 
         static_cast<int16_t>(torques.fr),
         static_cast<int16_t>(torques.rl),
         static_cast<int16_t>(torques.rr),
-        sense.vehicleSpeedAbs
+        static_cast<int16_t>(sense.vehicleSpeedAbs)
     };
 }
