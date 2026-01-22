@@ -643,9 +643,9 @@ TorqueVectoring::TrajectoryIntent TorqueVectoring::ComputeTrajectoryIntent(
 // - Rebalances longitudinal torque across axles when one hits its cap
 // - Applies hard clamp to final values
 TorqueVectoring::WheelTorques TorqueVectoring::SolveWheelTorques(
-    const TickContext& ctx, const SenseData& sense, const TrajectoryIntent& intent)
+    const TickContext &ctx, const SenseData &sense, const TrajectoryIntent &intent)
 {
-    const auto& TV = ctx.params->TV;
+    const auto &TV = ctx.params->TV;
 
     // Convert to motor coordinates
     const float TcF_req_m = sense.gearDir * intent.TcF;
@@ -655,7 +655,8 @@ TorqueVectoring::WheelTorques TorqueVectoring::SolveWheelTorques(
     const float TdF_req_m = intent.TdF;
     const float TdR_req_m = intent.TdR;
 
-    // Solve axle pairs under caps (prioritize Td)
+    // Solve axle pairs under caps (prioritize Td over Tc)
+    // This preserves steering differential as much as traction allows
     PairSolve front = SolvePairCaps(
         TcF_req_m, TdF_req_m,
         sense.capRev[FL], sense.capFwd[FL],
@@ -666,37 +667,12 @@ TorqueVectoring::WheelTorques TorqueVectoring::SolveWheelTorques(
         sense.capRev[RL], sense.capFwd[RL],
         sense.capRev[RR], sense.capFwd[RR]);
 
-    // Preserve trajectory: rebalance Tc across axles when one hits its cap
-    const float Tc_total_req_m = sense.gearDir * intent.Tc_total;
-    const float Tc_done_m = front.Tc + rear.Tc;
-    float need = Tc_total_req_m - Tc_done_m;
-
-    if (std::fabs(need) > 1e-3f)
-    {
-        auto headroom = [](float Tc, float TcMin, float TcMax, float need) -> float {
-            if (need > 0.f) return (TcMax - Tc);
-            if (need < 0.f) return (Tc - TcMin);
-            return 0.f;
-        };
-
-        const float availF = headroom(front.Tc, front.TcMin, front.TcMax, need);
-        const float availR = headroom(rear.Tc,  rear.TcMin,  rear.TcMax,  need);
-        const float sum = availF + availR;
-
-        if (sum > 1e-6f)
-        {
-            const float dF = need * (availF / sum);
-            const float dR = need * (availR / sum);
-
-            front.Tc = std::clamp(front.Tc + dF, front.TcMin, front.TcMax);
-            rear.Tc  = std::clamp(rear.Tc  + dR, rear.TcMin,  rear.TcMax);
-
-            front.L = front.Tc + front.Td;
-            front.R = front.Tc - front.Td;
-            rear.L  = rear.Tc  + rear.Td;
-            rear.R  = rear.Tc  - rear.Td;
-        }
-    }
+    // No cross-axle rebalancing.
+    // Rationale:
+    // - Traction limits mean the surface can't support more force
+    // - Shifting torque to another axle likely just causes that axle to slip too
+    // - Understeer (reduced yaw moment) is the safe failure mode
+    // - Each axle's SolvePairCaps already preserves Td (steering) over Tc (thrust)
 
     // Hard clamp (motor coords)
     const float hard = std::max(TV.maxTorqueDrive, TV.maxTorqueBrake);
@@ -704,11 +680,10 @@ TorqueVectoring::WheelTorques TorqueVectoring::SolveWheelTorques(
     WheelTorques out;
     out.fl = std::clamp(front.L, -hard, +hard);
     out.fr = std::clamp(front.R, -hard, +hard);
-    out.rl = std::clamp(rear.L,  -hard, +hard);
-    out.rr = std::clamp(rear.R,  -hard, +hard);
+    out.rl = std::clamp(rear.L, -hard, +hard);
+    out.rr = std::clamp(rear.R, -hard, +hard);
     return out;
 }
-
 
 // -----------------
 // Compute()
