@@ -85,13 +85,14 @@
       margin-bottom:10px;
     }
     .drivePadHeader .padSpeed{
-      font-size: 14px;
+      font-size: 16px;
       opacity: 1.0;
       color: #4444ff;
       font-weight: 500;
+      font-family: 'Courier New', Courier, monospace;
     }
     /* ---- Buttons ---- */
-    .btns{ display:grid; grid-template-columns: repeat(5, 1fr); gap:8px; }
+    .btns{ display:grid; grid-template-columns: repeat(6, 1fr); gap:8px; }
     button{ appearance:none; border:1px solid var(--line); background:transparent; color:var(--fg);
             border-radius:12px; padding:10px 0; font-size:18px; font-weight:800; cursor:pointer; }
     button.on{ border-color:rgba(59,130,246,.6); background:rgba(59,130,246,.15); }
@@ -304,10 +305,16 @@
 </section>
 <div class="btns">
 <button id="btn_gear" title="N" type="button">N</button>
-<button id="btn_high" title="High" type="button">🔦</button>
-<button id="btn_ind_l" title="Left" type="button">⬅️</button>
-<button id="btn_ind_r" title="Right" type="button">➡️</button>
+<button id="btn_high" title="High" type="button">
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 256 256" fill="currentColor">
+  <path
+    d="m142 219-3-1c-6-1-11-5-14-11-3-4-4-8-4-13V64c0-7 2-14 6-19 4-4 8-7 14-7v-1h5l1 1 23 2c14 3 27 8 38 16a87 87 0 0 1-21 155c-12 5-25 7-39 7l-3 1zm-10-91v65c0 4 1 7 3 10s5 4 8 4l14-1c8 0 16-2 23-5 15-5 28-13 38-25 13-17 19-36 16-57a77 77 0 0 0-45-61c-15-7-30-9-46-9-3 0-5 1-7 3-3 3-4 7-4 11zM10 96v-1c2-4 3-5 7-5h77c3 0 5 2 6 5 1 2 0 5-2 6l-4 1H16c-3 0-5-1-6-4zm0-36c1-4 3-5 7-5h77q4.5 0 6 3c1.5 3 0 5-1 7l-4 2H16c-3 0-5-2-6-4zm0 136c2-4 3-5 7-5h77q4.5 0 6 3c1 3 0 5-1 7l-5 2H17c-4 0-6-1-7-5zm0-68c1-4 3-5 7-5h77c3 0 5 1 6 4 1 4-2 8-6 8H17c-4 0-6-1-7-5zm0 36v-1c1-4 3-5 7-5h79c3 1 4 4 4 7s-3 5-5 5H17c-4 0-6-1-7-5z" />
+</svg>
+</button>
+<button id="btn_ind_l" title="Left" type="button">&#9664;</button>
+<button id="btn_ind_r" title="Right" type="button">&#9654;</button>
 <button id="btn_dump" title="Dump history" type="button">⬇️</button>
+<button id="btn_clear" title="Clear history" type="button">♻</button>
 </div>
 
 <details class="limits" id="limits_panel">
@@ -377,7 +384,7 @@
 <!-- Replay controls only used when opened with ?replay=1 -->
 <div id="replay_controls" style="display:none; gap:8px; align-items:center; color:#8a93a6; font-size:12px; padding:0 12px 12px;">
 <span class="pill">replay</span>
-<input accept=".ndjson,.jsonl,.txt,.log" id="replay_file" type="file"/>
+<input accept=".ndjson,.jsonl,.txt,.log,.csv" id="replay_file" type="file"/>
 <label>
       delay ms:
       <input id="replay_delay" min="0" style="width:80px;" type="number" value="100"/>

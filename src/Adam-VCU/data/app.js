@@ -9,6 +9,7 @@ document.body.style.userSelect = 'none';
 const wsStateEl = document.getElementById('ws_state');
 const modeStateEl = document.getElementById('mode_state');
 const padEl = document.getElementById('drivePad');
+const btnClear = document.getElementById('btn_clear');
 
 let padActive = false;
 let padOriginX = 0;
@@ -439,7 +440,7 @@ function setTxt(id, text) {
 
 function setVehicleVelocity(id, text) {
     const kph = Number(text);
-    setTxt(id, (Number.isFinite(kph) ? kph | 0 : 0) + ' km/h');
+    setTxt(id, (Number.isFinite(kph) ? kph.toFixed(1) : '0') + ' km/h');
 }
 
 function setWheelReadouts(w, tqNm, currRaw, rpm) {
@@ -534,6 +535,7 @@ function recordHistorySample(ts, msg) {
     ];
 
     history2d.push(row);
+    updateHistory();
 }
 
 function downloadCsv() {
@@ -550,10 +552,21 @@ function downloadCsv() {
     document.body.appendChild(a);
     a.click();
     a.remove();
+    clearCSVHistory();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
+function updateHistory() {
+    btnClear.textContent = '♻ (' + history2d.length + ')';
+}
+
+function clearCSVHistory() {
+    history2d.length = 0; // remove all
+    updateHistory();
+}
+
 document.getElementById('btn_dump').onclick = () => downloadCsv();
+btnClear.onclick = () => clearCSVHistory();
 
 // ---------- Charts ----------
 class SparkChart {
@@ -791,51 +804,65 @@ class ReplayTransport {
     _parseCsvToJson(lines) {
         if (lines.length < 2) return [];
 
-        // Skip header line, parse data rows
-        // CSV columns: ts_ms,t,s,tq_fl,tq_fr,tq_rl,tq_rr,cu_fl,cu_fr,cu_rl,cu_rr,
-        //              rpm_fl,rpm_fr,rpm_rl,rpm_rr,vf,tf,vr,tr,gear,low,high,il,ir
+        // Parse header line to build column name -> index mapping
+        const headers = lines[0].split(',');
+        const col = {};
+        for (let i = 0; i < headers.length; i++) {
+            col[headers[i].trim()] = i;
+        }
+
+        // Helper to get numeric value by column name
+        const num = (cols, name) => Number(cols[col[name]]) || 0;
+        const bool = (cols, name) => cols[col[name]] === '1';
+
         const jsonLines = [];
         for (let i = 1; i < lines.length; i++) {
             const cols = lines[i].split(',');
-            if (cols.length < 24) continue;
+            if (cols.length < headers.length) continue;
 
-            const gearVal = Number(cols[19]) || 0;
+            const gearVal = num(cols, 'gear');
             const gearStr = gearVal === 1 ? 'D' : gearVal === -1 ? 'R' : 'N';
 
             const msg = {
                 type: 'status',
-                t: Number(cols[1]) || 0,
-                s: Number(cols[2]) || 0,
+                t: num(cols, 't'),
+                s: num(cols, 's'),
                 torque: {
-                    fl: Number(cols[3]) || 0,
-                    fr: Number(cols[4]) || 0,
-                    rl: Number(cols[5]) || 0,
-                    rr: Number(cols[6]) || 0,
+                    fl: num(cols, 'tq_fl'),
+                    fr: num(cols, 'tq_fr'),
+                    rl: num(cols, 'tq_rl'),
+                    rr: num(cols, 'tq_rr'),
                 },
                 curr: {
-                    fl: Number(cols[7]) || 0,
-                    fr: Number(cols[8]) || 0,
-                    rl: Number(cols[9]) || 0,
-                    rr: Number(cols[10]) || 0,
+                    fl: num(cols, 'cu_fl'),
+                    fr: num(cols, 'cu_fr'),
+                    rl: num(cols, 'cu_rl'),
+                    rr: num(cols, 'cu_rr'),
                 },
                 vel: {
-                    fl: Number(cols[11]) || 0,
-                    fr: Number(cols[12]) || 0,
-                    rl: Number(cols[13]) || 0,
-                    rr: Number(cols[14]) || 0,
+                    fl: num(cols, 'rpm_fl'),
+                    fr: num(cols, 'rpm_fr'),
+                    rl: num(cols, 'rpm_rl'),
+                    rr: num(cols, 'rpm_rr'),
+                },
+                cmd: {
+                    fl: num(cols, 'cmd_fl'),
+                    fr: num(cols, 'cmd_fr'),
+                    rl: num(cols, 'cmd_rl'),
+                    rr: num(cols, 'cmd_rr'),
                 },
                 boards: {
-                    vf: Number(cols[15]) || 0,
-                    tf: Number(cols[16]) || 0,
-                    vr: Number(cols[17]) || 0,
-                    tr: Number(cols[18]) || 0,
+                    vf: num(cols, 'vf'),
+                    tf: num(cols, 'tf'),
+                    vr: num(cols, 'vr'),
+                    tr: num(cols, 'tr'),
                 },
                 vehicle: {
                     gear: gearStr,
-                    low: cols[20] === '1',
-                    high: cols[21] === '1',
-                    il: cols[22] === '1',
-                    ir: cols[23] === '1',
+                    low: bool(cols, 'low'),
+                    high: bool(cols, 'high'),
+                    il: bool(cols, 'il'),
+                    ir: bool(cols, 'ir'),
                 },
             };
             jsonLines.push(JSON.stringify(msg));
@@ -958,12 +985,14 @@ function handleIncoming(evDataString) {
     const vel = msg.vel || {};
 
     // Readouts + chart per wheel
+    let vehSpeed = 9999;
     for (const w of ['fl', 'fr', 'rl', 'rr']) {
         const tNm = tq[w] ?? 0;
         const cRaw = cu[w] ?? 0;
         const rpm = vel[w] ?? 0;
         setWheelReadouts(w, tNm, cRaw, rpm);
         charts[w].push(tNm, cRaw, rpm);
+        vehSpeed = Math.min(vehSpeed, rpm);
     }
 
     const boards = msg.boards || {};
@@ -976,6 +1005,10 @@ function handleIncoming(evDataString) {
     setBtn('btn_high', !!L.high);
     setBtn('btn_ind_l', !!L.il);
     setBtn('btn_ind_r', !!L.ir);
+
+    // update vehicle speed
+    vehSpeed = (vehSpeed * 53.4 * 0.036) / 60; // 60 ticks per revolution, 53.4cm wheel circumference -> cm/s to km/h
+    setVehicleVelocity('pad_speed', vehSpeed);
 }
 
 // ---------- Buttons ----------
