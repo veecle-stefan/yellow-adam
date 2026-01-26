@@ -226,20 +226,22 @@ const tuningKeys = [
     { id: 16, name: 'SlipDownFactor', min: 0.0, max: 1.0 },
     { id: 17, name: 'SlipMinTorque', min: 0.0, max: 500.0 },
     { id: 18, name: 'SlipRecoverTorquePerTick', min: 0.0, max: 500.0 },
-    { id: 19, name: 'SlipSpeedEps', min: 0.0, max: 500.0 },
-    { id: 20, name: 'maxRealisticAccel', min: 0.0, max: 500.0 },
-    { id: 21, name: 'maxRealisticDecel', min: 0.0, max: 500.0 },
+    { id: 19, name: 'WheelMinRPM', min: 0.0, max: 500.0 },
+    { id: 20, name: 'TractionCorrectionASR', min: 0.0, max: 1.0 },
+    { id: 21, name: 'TractionCorrectionABS', min: 0.0, max: 1.0 },
+    { id: 22, name: 'maxRealisticAccel', min: 0.0, max: 500.0 },
+    { id: 23, name: 'maxRealisticDecel', min: 0.0, max: 500.0 },
 
     // ----- Front/rear bias
-    { id: 22, name: 'DriveFrontShareLow', min: 0.0, max: 1.0 },
-    { id: 23, name: 'DriveFrontShareHigh', min: 0.0, max: 1.0 },
-    { id: 24, name: 'BrakeFrontShareLow', min: 0.0, max: 1.0 },
-    { id: 25, name: 'BrakeFrontShareHigh', min: 0.0, max: 1.0 },
-    { id: 26, name: 'FrontRearBiasFullTorqueDrive', min: 0.0, max: 1000.0 },
-    { id: 27, name: 'FrontRearBiasFullTorqueBrake', min: 0.0, max: 1000.0 },
+    { id: 24, name: 'DriveFrontShareLow', min: 0.0, max: 1.0 },
+    { id: 25, name: 'DriveFrontShareHigh', min: 0.0, max: 1.0 },
+    { id: 26, name: 'BrakeFrontShareLow', min: 0.0, max: 1.0 },
+    { id: 27, name: 'BrakeFrontShareHigh', min: 0.0, max: 1.0 },
+    { id: 28, name: 'FrontRearBiasFullTorqueDrive', min: 0.0, max: 1000.0 },
+    { id: 29, name: 'FrontRearBiasFullTorqueBrake', min: 0.0, max: 1000.0 },
 
     // ----- Braking near standstill
-    { id: 28, name: 'AntiReversingSpeed', min: 0.0, max: 500.0 },
+    { id: 30, name: 'AntiReversingSpeed', min: 0.0, max: 500.0 },
 ];
 
 // Persist last values locally so the input is populated when switching params.
@@ -266,20 +268,22 @@ const tuningLast = {
     16: 0.7, // SlipDownFactor
     17: 50.0, // SlipMinTorque
     18: 50.0, // SlipRecoverTorquePerTick
-    19: 20.0, // SlipSpeedEps
-    20: 30.0, // maxRealisticAccel
-    21: 40.0, // maxRealisticDecel
+    19: 20.0, // WheelMinRPM
+    20: 0.75, // TractionCorrectionASR
+    21: 0.25, // TractionCorrectionABS
+    22: 30.0, // maxRealisticAccel
+    23: 40.0, // maxRealisticDecel
 
     // bias
-    22: 0.55, // DriveFrontShareLow
-    23: 0.3, // DriveFrontShareHigh
-    24: 0.6, // BrakeFrontShareLow
-    25: 0.8, // BrakeFrontShareHigh
-    26: 150.0, // FrontRearBiasFullTorqueDrive
-    27: 300.0, // FrontRearBiasFullTorqueBrake
+    24: 0.55, // DriveFrontShareLow
+    25: 0.3, // DriveFrontShareHigh
+    26: 0.6, // BrakeFrontShareLow
+    27: 0.8, // BrakeFrontShareHigh
+    28: 150.0, // FrontRearBiasFullTorqueDrive
+    29: 300.0, // FrontRearBiasFullTorqueBrake
 
     // braking near standstill
-    28: 100.0, // AntiReversingSpeed
+    30: 100.0, // AntiReversingSpeed
 };
 
 const tuneKeyEl = document.getElementById('tune_key');
@@ -490,7 +494,7 @@ const HISTORY_SCHEMA = [
 
 const history2d = [];
 // expose for debugging
-window.VEECLE_HISTORY = { schema: HISTORY_SCHEMA, data: history2d };
+window.HISTORY = { schema: HISTORY_SCHEMA, data: history2d };
 
 function recordHistorySample(ts, msg) {
     const tq = msg.torque || {};
@@ -548,7 +552,7 @@ function downloadCsv() {
     const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `veecle_history_${Date.now()}.csv`;
+    a.download = `adam_log_${Date.now()}.csv`;
     document.body.appendChild(a);
     a.click();
     a.remove();

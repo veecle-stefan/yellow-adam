@@ -69,7 +69,10 @@ namespace
         {"SlipMinTorque", &DriveParams::TVParams::SlipMinTorque, 0.0f, 500.0f},
         {"SlipRecoverTorquePerTick", &DriveParams::TVParams::SlipRecoverTorquePerTick, 0.0f, 500.0f},
 
-        {"SlipSpeedEps", &DriveParams::TVParams::SlipSpeedEps, 0.0f, 500.0f},
+        {"WheelMinRPM", &DriveParams::TVParams::WheelMinRPM, 0.0f, 500.0f},
+        {"TractionCorrectionASR", &DriveParams::TVParams::TractionCorrectionASR, 0.0f, 1.0f},
+        {"TractionCorrectionABS", &DriveParams::TVParams::TractionCorrectionABS, 0.0f, 1.0f},
+
         {"maxRealisticAccel", &DriveParams::TVParams::maxRealisticAccel, 0.0f, 500.0f},
         {"maxRealisticDecel", &DriveParams::TVParams::maxRealisticDecel, 0.0f, 500.0f},
 
@@ -101,7 +104,10 @@ bool Tuning::SetByID(DriveParams::TVParams* tv, uint16_t id, float value)
     if (id >= kTVParamCount) return false;
 
     const auto &e = kTVParams[id];
-    value = clampf(value, e.lo, e.hi);
+    if ((value < e.lo) || (value > e.hi)) {
+        return false;
+    }
+    
     tv->*(e.mem) = value;
     return true;
 }

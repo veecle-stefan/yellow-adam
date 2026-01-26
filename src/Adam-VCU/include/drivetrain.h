@@ -18,6 +18,16 @@ public:
 
     using Gear = TorqueVectoring::Gear;
 
+    enum BeepRequest : uint8_t {
+        NoBeep = 0,
+        BeepSuccess = 1,
+        BeepFailure = 2
+    };
+
+    static constexpr BeepRequest SafeBeep(const BeepRequest old, const BeepRequest should) {
+        return max(old, should);
+    }
+
     struct VehicleState
     {
         bool hazards = false;
@@ -35,7 +45,6 @@ public:
         bool externalControl = false;
         uint32_t lastExtThrottle = 0;
         uint32_t lastExtSteering = 0;
-        bool reqPowerOff = false;
     };
 
     struct DriveTrainStatus
@@ -113,9 +122,20 @@ protected :
 
     struct TickDecision {
         TorqueVectoring::Torques torques{};
-        uint8_t cmd = Axle::RemoteCommand::CmdNOP;
-
+        Axle::RemoteCommand cmd = Axle::RemoteCommand::CmdNOP;
+        //TODO: Implment a clean structure with always (cmd+payload) and no strange beep/flag encoding, e.g. split cmd byte in flags (up to 16 commands is enough)
+        uint8_t beep = 0;
         bool failSafe = false;
+    };
+
+    struct SafetyDecision {
+        Axle::RemoteCommand cmd = Axle::RemoteCommand::CmdNOP;
+        uint8_t warningBeep = 0;
+    };
+
+    struct Requests {
+        BeepRequest beep = BeepRequest::NoBeep;
+        bool reqPowerOff = false;
     };
 
     // ----- Members -----
@@ -138,15 +158,15 @@ protected :
 
     // ----- Pipeline -----
     TickContext  BuildContext(uint32_t nowMs);
-    TickDecision ComputeDecision(const TickContext &ctx, VehicleState &state);
-    void ProcessExtCmds(TickContext& ctx, VehicleState& state);
+    TickDecision ComputeDecision(const TickContext &ctx, VehicleState &state, const DriveTrain::Requests r);
+    Requests ProcessExtCmds(TickContext& ctx, VehicleState& state);
     void         ApplyDecision(const TickDecision& dec, VehicleState& state);
     void         CheckGear(const TickContext& ctx, VehicleState& state);
 
     // ----- Helpers (small, single-purpose) -----
     void PublishStatus(const TickContext& ctx, const TickDecision& dec, const VehicleState& state);
 
-    static UserCmd     ReadUserCmd(UserInput ch1, UserInput ch2, UserInput ch3, uint32_t nowMs);
-    static uint8_t ControllerSafety(const TickContext& ctx, const VehicleState& state);
-    static void        ComputeLights(const TickContext& ctx, TickDecision& dec,  VehicleState& state);
+    static UserCmd        ReadUserCmd(UserInput ch1, UserInput ch2, UserInput ch3, uint32_t nowMs);
+    static SafetyDecision ControllerSafety(const TickContext& ctx, const VehicleState& state, const DriveTrain::Requests r);
+    static void           ComputeLights(const TickContext& ctx, TickDecision& dec,  VehicleState& state);
 };

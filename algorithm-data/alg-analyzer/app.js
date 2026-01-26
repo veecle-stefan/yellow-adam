@@ -231,8 +231,8 @@ function lerpLastRPM(prev, curr, u) {
       curr.lastFront.receivedTorqueR,
       u,
     ),
-    rpmL: lerpInt(prev.lastFront.rpmL, curr.lastFront.rpmL, u),
-    rpmR: lerpInt(prev.lastFront.rpmR, curr.lastFront.rpmR, u),
+    speedL_meas: lerpInt(prev.lastFront.speedL_meas, curr.lastFront.speedL_meas, u),
+    speedR_meas: lerpInt(prev.lastFront.speedR_meas, curr.lastFront.speedR_meas, u),
   };
 }
 // ---- Replay ----
@@ -296,14 +296,14 @@ function runReplay() {
         lastFront: {
           receivedTorqueL: safeInt(r.tq_fl),
           receivedTorqueR: safeInt(r.tq_fr),
-          rpmL: safeInt(r.rpm_fl),
-          rpmR: safeInt(r.rpm_fr),
+          speedL_meas: safeInt(r.rpm_fl),
+          speedR_meas: safeInt(r.rpm_fr),
         },
         lastRear: {
           receivedTorqueL: safeInt(r.tq_rl),
           receivedTorqueR: safeInt(r.tq_rr),
-          rpmL: safeInt(r.rpm_rl),
-          rpmR: safeInt(r.rpm_rr),
+          speedL_meas: safeInt(r.rpm_rl),
+          speedR_meas: safeInt(r.rpm_rr),
         },
       };
       // Run internal ticks at 20ms resolution within this 100ms sample interval.
@@ -720,8 +720,8 @@ function applyEditorAlgorithm() {
       1,
       0,
       0,
-      { receivedTorqueL: 0, receivedTorqueR: 0, rpmL: 0, rpmR: 0 },
-      { receivedTorqueL: 0, receivedTorqueR: 0, rpmL: 0, rpmR: 0 },
+      { receivedTorqueL: 0, receivedTorqueR: 0, speedL_meas: 0, speedR_meas: 0 },
+      { receivedTorqueL: 0, receivedTorqueR: 0, speedL_meas: 0, speedR_meas: 0 },
     );
 
     activeTV = compiled;

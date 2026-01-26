@@ -34,7 +34,18 @@ public:
         DriveParams* params = nullptr;
     };
 
-    struct Torques { int16_t fl=0, fr=0, rl=0, rr=0; int16_t vehicleSpeedAbs;};
+    struct HoldFlags
+    {
+        bool hFL = false;
+        bool hFR = false;
+        bool hRL = false;
+        bool hRR = false;
+    };
+
+    struct Torques { int16_t fl=0, fr=0, rl=0, rr=0;
+        int16_t vehicleSpeedAbs; 
+        HoldFlags hold;
+    };
 
     Torques Compute(const TickContext& ctx, const Gear& currGear);
 
@@ -99,9 +110,16 @@ protected:
     // Solve L=Tc+Td, R=Tc-Td with per-wheel caps; priority = keep Td (trajectory)
     static PairSolve SolvePairCaps(float TcReq, float TdReq,
                                    float capNegL, float capPosL,
-                                   float capNegR, float capPosR);
+                                   float capNegR, float capPosR,
+                                    float k);
 
-    static float AxleSpeedAbs(const SenseData& s, Wheel L, Wheel R);
+    static void ApplyBrakeFadeCaps(const TickContext &ctx, SenseData &sd);
+
+    static HoldFlags ComputeHoldFlags(
+        const TickContext &ctx,
+        const SenseData &sense);
+
+    static float AxleSpeedAbs(const SenseData &s, Wheel L, Wheel R);
 
     // ---- Persistent state
     float m_vehicleSpeedAbs = 0.f;

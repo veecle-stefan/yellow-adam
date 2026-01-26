@@ -104,6 +104,7 @@ int16_t  speedAvgAbs;                   // average measured speed in absolute
 uint8_t  timeoutFlgADC    = 0;          // Timeout Flag for ADC Protection:    0 = OK, 1 = Problem detected (line disconnected or wrong ADC data)
 uint8_t  timeoutFlgSerial = 0;          // Timeout Flag for Rx Serial command: 0 = OK, 1 = Problem detected (line disconnected or wrong Rx data)
 uint8_t commandBeep = 0;
+uint8_t commandFlags = 0;
 
 uint8_t  ctrlModReqRaw = CTRL_MOD_REQ;
 uint8_t  ctrlModReq    = CTRL_MOD_REQ;  // Final control mode request 
@@ -661,41 +662,66 @@ void updateCurSpdLim(void) {
 #endif
 }
 
- /*
+/*
  * Standstill Hold Function
  * This function uses Cruise Control to provide an anti-roll functionality at standstill.
  * Only available and makes sense for FOC VOLTAGE or FOC TORQUE mode.
- * 
- * Input:  none
+ * Supports independent left/right wheel control via FLG_STANDSTILL_L and FLG_STANDSTILL_R.
+ *
+ * Input:  commandFlags (FLG_STANDSTILL_L, FLG_STANDSTILL_R)
  * Output: standstillAcv
  */
-void standstillHold(void) {
-  #if defined(STANDSTILL_HOLD_ENABLE) && (CTRL_TYP_SEL == FOC_CTRL) && (CTRL_MOD_REQ != SPD_MODE)
-    if (!rtP_Left.b_cruiseCtrlEna) {                                  // If Stanstill in NOT Active -> try Activation
-      if (((input1[inIdx].cmd > 50 || input2[inIdx].cmd < -50) && speedAvgAbs < 30) // Check if Brake is pressed AND measured speed is small
-          || (input2[inIdx].cmd < 20 && speedAvgAbs < 5)) {           // OR Throttle is small AND measured speed is very small
-        rtP_Left.n_cruiseMotTgt   = 0;
-        rtP_Right.n_cruiseMotTgt  = 0;
-        rtP_Left.b_cruiseCtrlEna  = 1;
-        rtP_Right.b_cruiseCtrlEna = 1;
-        standstillAcv = 1;
-      } 
+void standstillHold(void)
+{
+#if defined(STANDSTILL_HOLD_ENABLE) && (CTRL_TYP_SEL == FOC_CTRL) && (CTRL_MOD_REQ != SPD_MODE)
+  uint8_t requestHoldL = (commandFlags & FLG_STANDSTILL_L);
+  uint8_t requestHoldR = (commandFlags & FLG_STANDSTILL_R);
+
+  // ===== LEFT MOTOR =====
+  if (!rtP_Left.b_cruiseCtrlEna)
+  { // If Left Standstill is NOT Active -> try Activation
+    if (requestHoldL && (ABS(rtY_Left.n_mot) < 30))
+    { // Check if flag set AND wheel speed is safe
+      rtP_Left.n_cruiseMotTgt = 0;
+      rtP_Left.b_cruiseCtrlEna = 1;
     }
-    else {                                                            // If Stanstill is Active -> try Deactivation
-      if (input1[inIdx].cmd < 20 && input2[inIdx].cmd > 50 && !cruiseCtrlAcv) { // Check if Brake is released AND Throttle is pressed AND no Cruise Control
-        rtP_Left.b_cruiseCtrlEna  = 0;
-        rtP_Right.b_cruiseCtrlEna = 0;
-        standstillAcv = 0;
-      }
+  }
+  else
+  { // If Left Standstill IS Active -> try Deactivation
+    if (!requestHoldL && !cruiseCtrlAcv)
+    { // Check if flag cleared AND no Cruise Control active
+      rtP_Left.b_cruiseCtrlEna = 0;
     }
-  #endif
+  }
+
+  // ===== RIGHT MOTOR =====
+  if (!rtP_Right.b_cruiseCtrlEna)
+  { // If Right Standstill is NOT Active -> try Activation
+    if (requestHoldR && (ABS(rtY_Right.n_mot) < 30))
+    { // Check if flag set AND wheel speed is safe
+      rtP_Right.n_cruiseMotTgt = 0;
+      rtP_Right.b_cruiseCtrlEna = 1;
+    }
+  }
+  else
+  { // If Right Standstill IS Active -> try Deactivation
+    if (!requestHoldR && !cruiseCtrlAcv)
+    { // Check if flag cleared AND no Cruise Control active
+      rtP_Right.b_cruiseCtrlEna = 0;
+    }
+  }
+
+  // Update global standstill active flag (for other parts of code that check it)
+  standstillAcv = (rtP_Left.b_cruiseCtrlEna || rtP_Right.b_cruiseCtrlEna) ? 1 : 0;
+#endif
 }
 
- /*
+
+/*
  * Electric Brake Function
  * In case of TORQUE mode, this function replaces the motor "freewheel" with a constant braking when the input torque request is 0.
  * This is useful when a small amount of motor braking is desired instead of "freewheel".
- * 
+ *
  * Input: speedBlend = fixdt(0,16,15), reverseDir = {0, 1}
  * Output: input2.cmd (Throtle) with brake component included
  */
@@ -866,20 +892,52 @@ void readInputRaw(void) {
         input1[inIdx].raw = commandL.steer;
         input2[inIdx].raw = commandL.speed;
           
-        // is it a beep or should we ignore?
-        if (commandL.cmd >= CmdBeep) {
-          commandBeep = 30 - (commandL.cmd - CmdBeep);
-        } else {
-          commandBeep = 0;
-          switch (commandL.cmd) {
-            case CmdPowerOff:
-              poweroff();
-              break;
-            case CmdNOP:
-              commandBeep = 0;
-              break;
+        // process the commands
+        switch (commandL.cmd)
+        {
+        case CmdPowerOff:
+          poweroff();
+          break;
+        case CmdDisableMotors:
+          enable = 0;
+          break;
+
+        case CmdEnableMotors:
+          if (!rtY_Left.z_errCode && !rtY_Right.z_errCode)
+          {
+            enable = 1;
           }
+          break;
+
+        case CmdSetCurrentLimit:
+          // flag field contains current limit in Amps (1-15A typical)
+          if (commandL.flag > 0 && commandL.flag / 10 <= I_MOT_MAX)
+          {
+            rtP_Left.i_max = rtP_Right.i_max = (int16_t)((commandL.flag * A2BIT_CONV / 10) << 4);
+          }
+          break;
+
+        case CmdSetSpeedLimit:
+          // flag field contains speed limit: RPM = flag * 4 (so 250 = 1000 RPM)
+          if (commandL.flag > 0)
+          {
+            int16_t rpm = (int16_t)commandL.flag * 4;
+            if (rpm > N_MOT_MAX)
+              rpm = N_MOT_MAX;
+            rtP_Left.n_max = rtP_Right.n_max = (int16_t)(rpm << 4);
+          }
+          break;
+        case CmdNOP:
+          {
+            // process the flags
+            uint8_t beeps = commandL.flag >> 4;
+            commandFlags = commandL.flag & 0x0F;
+            commandBeep = (beeps == 0) ? 0 : 32 - (beeps << 1);
+          }
+          break;
         }
+      
+        
       #endif
     }
     #endif
@@ -1289,7 +1347,7 @@ void usart_process_command(SerialCommand *command_in, SerialCommand *command_out
   #else
   uint16_t checksum;
   if (command_in->start == SERIAL_START_FRAME) {
-    checksum = (uint16_t)(command_in->start ^ command_in->steer ^ command_in->speed);
+    checksum = (uint16_t)(command_in->start ^ command_in->steer ^ command_in->speed ^ command_in->cmd ^ command_in->flag) ;
     if (command_in->checksum == checksum) {
       *command_out = *command_in;
       if (usart_idx == 2) {             // Sideboard USART2

@@ -240,77 +240,122 @@ DriveTrain::TickContext DriveTrain::BuildContext(uint32_t nowMs)
     return ctx;
 }
 
-uint8_t DriveTrain::ControllerSafety(const TickContext& ctx, const VehicleState& state)
+DriveTrain::SafetyDecision DriveTrain::ControllerSafety(const TickContext& ctx, const VehicleState& state, const DriveTrain::Requests r)
 {
-    enum class Severity : uint8_t { Ok=0, Warn=1, Off=2 };
+    // ---- Melody handling (minimal state machine) ----------------------------
 
-    auto sevMax = [](Severity a, Severity b) -> Severity { return (static_cast<uint8_t>(a) > static_cast<uint8_t>(b)) ? a : b; };
+    static constexpr uint8_t kIdleWarn[10] = {10, 0, 0, 0, 0, 1, 0, 0, 0, 0};
+    static constexpr uint8_t kCtrlWarn[10] = {2, 2, 0, 0, 2, 2, 0, 0, 2, 2};
+    static constexpr uint8_t kFail[10] = {15, 15, 0, 1, 1, 1, 1, 1, 1, 1};
+    static constexpr uint8_t kSuccess[10] = {1, 1, 0, 0, 5, 5, 5, 0, 0, 0};
 
-    auto evalOne = [&](const std::optional<Axle::HistoryFrame>& fb) -> Severity {
-        if (!fb) return Severity::Ok; // treat missing feedback as "no data" (handled separately for beep)
+    struct Melody
+    {
+        const uint8_t *tones = nullptr; // points to one of the arrays above
+        uint8_t i = 10;                 // 10 == idle / finished
+    };
+    static Melody mel;
+    static uint8_t melSlowdown = 0;
 
-        const auto& s = fb->sample;
+    auto isPlaying = [&]
+    { return mel.tones && mel.i < 10; };
 
-        // Hard shutdown conditions
-        if (s.batVoltage < ctx.params->Controller.VoltageOff) return Severity::Off;
-        if (s.boardTemp >= ctx.params->Controller.TempOff)    return Severity::Off;
+    auto startMelody = [&](const uint8_t *tones)
+    {
+        if (isPlaying())
+            return; // do not restart while playing
+        mel.tones = tones;
+        mel.i = 0;
+        melSlowdown = 0;
+    };
+    // ---- Safety logic --------------------------------------------------------
 
-        // Warning conditions
-        if (s.batVoltage < ctx.params->Controller.VoltageWarn) return Severity::Warn;
-        if (s.boardTemp  >= ctx.params->Controller.TempWarn)   return Severity::Warn;
+    enum class Severity : uint8_t
+    {
+        Ok = 0,
+        Warn = 1,
+        Off = 2
+    };
+    SafetyDecision saf{};
+
+    auto evalOne = [&](const std::optional<Axle::HistoryFrame> &fb) -> Severity
+    {
+        if (!fb)
+            return Severity::Ok;
+        const auto &s = fb->sample;
+
+        if (s.batVoltage < ctx.params->Controller.VoltageOff ||
+            s.boardTemp >= ctx.params->Controller.TempOff)
+            return Severity::Off;
+
+        if (s.batVoltage < ctx.params->Controller.VoltageWarn ||
+            s.boardTemp >= ctx.params->Controller.TempWarn)
+            return Severity::Warn;
 
         return Severity::Ok;
     };
 
-    // 0) Highest priority: explicit poweroff request
-    if (state.reqPowerOff) {
-        return Axle::RemoteCommand::CmdPowerOff;
+    // Explicit poweroff request
+    if (r.reqPowerOff)
+    {
+        saf.cmd = Axle::RemoteCommand::CmdPowerOff;
+        return saf;
     }
 
-    // 1) Idle-based shutdown (hard)
+    // Idle-based shutdown
     const uint32_t timeUserIdle = ctx.nowMs - state.lastUserInput;
-    if (timeUserIdle > SWConfig::UserBehaviour::MaxUserIdleBeforeShutdownMs) {
-        return Axle::RemoteCommand::CmdPowerOff;
+    if (timeUserIdle > SWConfig::UserBehaviour::MaxUserIdleBeforeShutdownMs)
+    {
+        saf.cmd = Axle::RemoteCommand::CmdPowerOff;
+        return saf;
     }
 
-    // 2) Evaluate each controller independently (even if one is missing)
-    Severity sev = Severity::Ok;
-    sev = sevMax(sev, evalOne(ctx.currFront));
-    sev = sevMax(sev, evalOne(ctx.currRear));
-
-    if (sev == Severity::Off) {
-        return Axle::RemoteCommand::CmdPowerOff;
+    // Evaluate both controllers
+    Severity sev = std::max(evalOne(ctx.currFront), evalOne(ctx.currRear));
+    if (sev == Severity::Off)
+    {
+        saf.cmd = Axle::RemoteCommand::CmdPowerOff;
+        return saf;
     }
 
-    // 3) Decide warning/beep behavior
-    //    We separate "warning severity" from "how to beep" so nothing can override poweroff.
-    uint8_t cmd = Axle::RemoteCommand::CmdNOP;
+    // ---- Decide which melody is requested (priority by overwrite) -----------
 
-    // 3a) User-idle warning beep pattern (soft)
-    if (timeUserIdle > SWConfig::UserBehaviour::MaxUserIdleWarnMs) {
-        const uint32_t t = timeUserIdle / 100;
-        if (t % 10 == 0) {
-            cmd = Axle::RemoteCommand::CmdBeep;
-        } else if (t % 10 == 5) {
-            cmd = Axle::RemoteCommand::CmdBeep + (uint8_t)10;
+    const uint8_t *req = nullptr;
+
+    if (timeUserIdle > SWConfig::UserBehaviour::MaxUserIdleWarnMs)
+    {
+        req = kIdleWarn;
+    }
+
+    if (sev == Severity::Warn || !ctx.currFront || !ctx.currRear)
+    {
+        req = kCtrlWarn;
+    }
+
+    // user request beeps override warnings
+    if (r.beep != BeepRequest::NoBeep)
+    {
+        req = (r.beep == BeepRequest::BeepFailure) ? kFail : kSuccess;
+    }
+
+    if (req)
+    {
+        startMelody(req);
+    }
+
+    // ---- Advance melody ------------------------------------------------------
+
+    if (isPlaying())
+    {
+        saf.warningBeep = mel.tones[mel.i];
+        if (++melSlowdown == 5)
+        {
+            melSlowdown = 0;
+            ++mel.i;
         }
     }
 
-    // 3b) Controller warning beep (voltage/temp warn) — only if we haven't already chosen an idle pattern
-    if (sev == Severity::Warn && cmd == Axle::RemoteCommand::CmdNOP) {
-        cmd = Axle::RemoteCommand::CmdBeep;
-    }
-
-    // 3c) Missing feedback policy (optional):
-    // If one or both controllers have no feedback, you might want a beep, but DO NOT treat as shutdown.
-    const bool frontOk = ctx.currFront.has_value();
-    const bool rearOk  = ctx.currRear.has_value();
-    if ((!frontOk || !rearOk) && cmd == Axle::RemoteCommand::CmdNOP) {
-        // Keep this mild; otherwise you’ll beep constantly on startup.
-        cmd = Axle::RemoteCommand::CmdBeep;
-    }
-
-    return cmd;
+    return saf;
 }
 
 void DriveTrain::ComputeLights(const TickContext& ctx, TickDecision& dec, VehicleState& state)
@@ -396,7 +441,7 @@ void DriveTrain::CheckGear(const TickContext& ctx, VehicleState& state)
     }
 }
 
-DriveTrain::TickDecision DriveTrain::ComputeDecision(const TickContext& ctx, VehicleState& state)
+DriveTrain::TickDecision DriveTrain::ComputeDecision(const TickContext& ctx, VehicleState& state, const DriveTrain::Requests r)
 {
     TickDecision dec{};
 
@@ -413,7 +458,9 @@ DriveTrain::TickDecision DriveTrain::ComputeDecision(const TickContext& ctx, Veh
     state.vehicleSpeed = dec.torques.vehicleSpeedAbs;
 
     // 4) safety command
-    dec.cmd = ControllerSafety(ctx, state);
+    SafetyDecision saf = ControllerSafety(ctx, state, r);
+    dec.cmd = saf.cmd;
+    dec.beep = max(dec.beep, saf.warningBeep);
 
     // 5) lights intent
     ComputeLights(ctx, dec, state);
@@ -424,8 +471,13 @@ DriveTrain::TickDecision DriveTrain::ComputeDecision(const TickContext& ctx, Veh
 void DriveTrain::ApplyDecision(const TickDecision& dec, VehicleState& state)
 {
     // Motors
-    axleF.Send(dec.torques.fl, dec.torques.fr, dec.cmd);
-    axleR.Send(dec.torques.rl, dec.torques.rr, dec.cmd);
+    uint8_t holdFlagsF = (dec.torques.hold.hFL ? Axle::FLG_STANDSTILL_FORCE_L : 0) |
+                         (dec.torques.hold.hFR ? Axle::FLG_STANDSTILL_FORCE_R : 0);
+    uint8_t holdFlagsR = (dec.torques.hold.hRL ? Axle::FLG_STANDSTILL_FORCE_L : 0) |
+                         (dec.torques.hold.hRR ? Axle::FLG_STANDSTILL_FORCE_R : 0);
+
+    axleF.Send(dec.torques.fl, dec.torques.fr, dec.cmd, dec.beep, holdFlagsF);
+    axleR.Send(dec.torques.rl, dec.torques.rr, dec.cmd, dec.beep, holdFlagsR);
 
 
     // Lights
@@ -499,10 +551,11 @@ void DriveTrain::PublishStatus(const TickContext& ctx, const TickDecision& dec, 
   xQueueOverwrite(statusQueue, &st);
 }
 
-void DriveTrain::ProcessExtCmds(TickContext& ctx, VehicleState& state)
+DriveTrain::Requests DriveTrain::ProcessExtCmds(TickContext& ctx, VehicleState& state)
 {
     // keep track of timing for external control
     static uint32_t lastExtSteerCmd = 0;
+    Requests r = {};
 
     if (state.externalControl)
     {
@@ -517,20 +570,30 @@ void DriveTrain::ProcessExtCmds(TickContext& ctx, VehicleState& state)
     while (xQueueReceive(extCmdQueue, &extCmd, 0) == pdTRUE) {
         switch (extCmd.cmd) {
             case DriveCommand::SetGear:
-                state.currGear = static_cast<Gear>(extCmd.p1.u8);
+                // only allow gear changes when speed == 0 and user present
+                if ((state.vehicleSpeed == 0) && (ctx.user.detected || state.externalControl)) {
+                    state.currGear = static_cast<Gear>(extCmd.p1.u8);
+                    r.beep = SafeBeep(r.beep, BeepRequest::BeepSuccess);
+                } else {
+                    r.beep = SafeBeep(r.beep, BeepRequest::BeepFailure);
+                }
                 break;
             case DriveCommand::SetIndicators:
                 state.indicatorsL = extCmd.p1.onOff;
                 state.indicatorsR = extCmd.p2.onOff;
                 break;
             case DriveCommand::SetPowerLimit:
-                uint16_t IDmaxPower, IDspdFwd, IDspdRev;
-                Tuning::IdByKey("maxDrivePower", IDmaxPower);
-                Tuning::IdByKey("maxSpeedFwd", IDspdFwd);
-                Tuning::IdByKey("maxSpeedRev", IDspdRev);
-                Tuning::SetByID(&ctx.params->TV, IDmaxPower, extCmd.p1.u16);
-                Tuning::SetByID(&ctx.params->TV, IDspdFwd, extCmd.p2.u16);
-                Tuning::SetByID(&ctx.params->TV, IDspdRev, extCmd.p3.u16);
+                {
+                    uint16_t IDmaxPower, IDspdFwd, IDspdRev;
+                    bool success = true;
+                    Tuning::IdByKey("maxDrivePower", IDmaxPower);
+                    Tuning::IdByKey("maxSpeedFwd", IDspdFwd);
+                    Tuning::IdByKey("maxSpeedRev", IDspdRev);
+                    success &= Tuning::SetByID(&ctx.params->TV, IDmaxPower, extCmd.p1.u16);
+                    success &= Tuning::SetByID(&ctx.params->TV, IDspdFwd, extCmd.p2.u16);
+                    success &= Tuning::SetByID(&ctx.params->TV, IDspdRev, extCmd.p3.u16);
+                    r.beep = SafeBeep(r.beep, success ? BeepRequest::BeepSuccess : BeepRequest::BeepFailure);
+                }
                 break;
             case DriveCommand::EnableExternalControl:
                 state.externalControl = extCmd.p1.onOff;
@@ -552,10 +615,13 @@ void DriveTrain::ProcessExtCmds(TickContext& ctx, VehicleState& state)
                 state.lastExtSteering = extCmd.p2.i16;
                 break;
             case DriveCommand::PowerOff:
-                state.reqPowerOff = true;
+                r.reqPowerOff = true;
                 break;
             case DriveCommand::TuneTVParam:
-                Tuning::SetByID(&ctx.params->TV, extCmd.p1.u16, extCmd.p2.f16); // clamps inside
+                {
+                    bool success = Tuning::SetByID(&ctx.params->TV, extCmd.p1.u16, extCmd.p2.f16); // will fail if outside min/max
+                    r.beep = SafeBeep(r.beep, success ? BeepRequest::BeepSuccess : BeepRequest::BeepFailure);
+                }
                 break;
         }
     }
@@ -567,6 +633,8 @@ void DriveTrain::ProcessExtCmds(TickContext& ctx, VehicleState& state)
         ctx.user.detected = true;
         ctx.user.someInput = true;
     }
+
+    return r;
 }
 
 void DriveTrain::ControlTask()
@@ -581,8 +649,8 @@ void DriveTrain::ControlTask()
 
         TickContext  ctx = BuildContext(nowMs);
         ctx.params = &params; 
-        ProcessExtCmds(ctx, state);
-        TickDecision dec = ComputeDecision(ctx, state);
+        Requests r = ProcessExtCmds(ctx, state);
+        TickDecision dec = ComputeDecision(ctx, state, r);
         ApplyDecision(dec, state);
 
         PublishStatus(ctx, dec, state);

@@ -78,15 +78,16 @@ void Axle::Shutdown()
 
 
 
-void Axle::SendInternal(int16_t motL, int16_t motR, uint8_t remoteCmd)
+void Axle::SendInternal(int16_t motL, int16_t motR, uint8_t remoteCmd, uint8_t beep, uint8_t flags)
 {
     SerialCommand command;
     // Create command
-    command.start    = Axle::StartFrame;
+    command.start   = Axle::StartFrame;
     command.motR    = motR;
     command.motL    = motL;
-    command.cmd      = remoteCmd;
-    command.checksum = (uint16_t)(command.start ^ command.motR ^ command.motL);
+    command.cmd     = remoteCmd;
+    command.flags   = encodeFlags(beep, flags);
+    command.checksum = (uint16_t)(command.start ^ command.motR ^ command.motL ^ command.cmd ^ command.flags);
 
     // Write to Serial
     uart_write_bytes(conn, reinterpret_cast<const char*>(&command), sizeof(SerialCommand));
@@ -94,9 +95,9 @@ void Axle::SendInternal(int16_t motL, int16_t motR, uint8_t remoteCmd)
 
 
 // Push latest command into size-1 queue
-bool Axle::Send(int16_t motL, int16_t motR, uint8_t cmd)
+bool Axle::Send(int16_t motL, int16_t motR, uint8_t cmd, uint8_t beep, uint8_t flags)
 {
-    MotorCommand packet{motL, motR, cmd};
+    MotorCommand packet{motL, motR, cmd, beep, flags};
     // Overwrite last command, never blocks
     BaseType_t res = xQueueOverwrite(commandQueue, &packet);
     return (res == pdPASS);
@@ -210,7 +211,7 @@ void Axle::SendEventHandler()
     for (;;) {
         // Get latest command if available, otherwise keep previous or default
         if (xQueueReceive(commandQueue, &cmd, portMAX_DELAY) == pdTRUE) {
-            SendInternal(cmd.motL, cmd.motR, cmd.func);
+            SendInternal(cmd.motL, cmd.motR, cmd.func, cmd.beep, cmd.flags);
         }
         
     }

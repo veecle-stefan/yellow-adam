@@ -112,7 +112,17 @@ struct DriveParams
 
         // Minimum reference speed needed to use ratio-based slip detection (noise floor).
         // Units: wheel-speed units.
-        float SlipSpeedEps = 20.f;
+        float WheelMinRPM = 20.f;
+
+        // Traction correction factor under ASR (acceleration slip).
+        // 0 = equal torque L/R (conservative), 1 = full shift to gripping wheel (max thrust).
+        // Higher values give more acceleration but may cause yaw when traction returns.
+        float TractionCorrectionASR = 0.75f;
+
+        // Traction correction factor under ABS (braking slip).
+        // 0 = equal braking L/R (stable), 1 = full shift to gripping wheel (max decel).
+        // Recommend keeping low (0..0.3) for directional stability under braking.
+        float TractionCorrectionABS = 0.25f;
 
         // Maximum plausible change in the estimated vehicle speed per tick.
         // Units: wheel-speed units per tick. Used to reject outliers (“teleporting”).
@@ -143,7 +153,8 @@ struct DriveParams
 
         // Fade braking torque to zero as |wheel speed| approaches 0 to avoid reversing a stopped wheel.
         // Units: wheel-speed units. (Used by brakeScale = |w|/AntiReversingSpeed, clamped 0..1)
-        float AntiReversingSpeed = 100.f;
+        float AntiReversingSpeed = 50.f;
+        float AntiReversingHoldSpeed = 30.f;
     } TV;
 
     // Convenience: constexpr-like default instance (still mutable at runtime).

@@ -21,9 +21,6 @@ window.timeScaling = 5;
 // =====================
 // Params (mirror of TVParams)
 // =====================
-// =====================
-// Params (mirror of TVParams)
-// =====================
 const params = {
   TV: {
     // Output / safety limits (verify defaults)
@@ -86,7 +83,8 @@ function TorqueVectoring(currGear, t, s, lastFront, lastRear) {
   // -----------------
   // Helpers
   // -----------------
-
+  const clamp = (x, lo, hi) => (x < lo ? lo : x > hi ? hi : x);
+  const lerp = (a, b, u) => a + (b - a) * u;
   const truncTowardZero = (x) => (x < 0 ? Math.ceil(x) : Math.floor(x));
 
   function WheelSpeed(absSpeed = 0, index = -1) {
@@ -249,8 +247,8 @@ function TorqueVectoring(currGear, t, s, lastFront, lastRear) {
     sense.ok[indexShift] = true;
     sense.ok[indexShift + 1] = true;
 
-    const sL = +fb.speedL_meas || 0;
-    const sR = +fb.speedR_meas || 0;
+    const sL = +fb.sample.speedL_meas || 0;
+    const sR = +fb.sample.speedR_meas || 0;
 
     sense.w[indexShift] = sL;
     sense.w[indexShift + 1] = sR;
@@ -258,8 +256,8 @@ function TorqueVectoring(currGear, t, s, lastFront, lastRear) {
     sense.wAbs[indexShift] = Math.abs(sL);
     sense.wAbs[indexShift + 1] = Math.abs(sR);
 
-    sense.cmdAtReading[indexShift] = +fb.cmdL || 0;
-    sense.cmdAtReading[indexShift + 1] = +fb.cmdR || 0;
+    sense.cmdAtReading[indexShift] = +fb.sample.cmdL || 0;
+    sense.cmdAtReading[indexShift + 1] = +fb.sample.cmdR || 0;
   }
 
   ReadAxleSpeeds(lastFront, 0);

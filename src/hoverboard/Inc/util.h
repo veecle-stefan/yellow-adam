@@ -35,19 +35,26 @@
       uint8_t  checksumh;
     } SerialCommand;
   #else
-    typedef enum {
-      CmdNOP = 0,
-      CmdPowerOff = 1,
-      CmdBeep = 230,
-    } RemoteCommand;
+typedef enum
+{
+  CmdNOP = 0,
+  CmdPowerOff = 1,
+  CmdDisableMotors = 2,
+  CmdEnableMotors = 3,
+  CmdSetCurrentLimit = 10, // flag field = current limit in 1/10th Amps (0-255, e.g., 45 = 4.5A)
+  CmdSetSpeedLimit = 11,   // flag field = speed limit in RPM / 4 (0-255, e.g., 250 = 1000 RPM)
+} RemoteCommand;
+#define FLG_STANDSTILL_L 0x01
+#define FLG_STANDSTILL_R 0x02
     typedef struct{
       uint16_t  start;
       int16_t   steer;
       int16_t   speed;
       uint8_t   cmd;
+      uint8_t   flag;
       uint16_t  checksum;
     } __attribute__((packed)) SerialCommand;
-  #endif
+#endif
 #endif
 #if defined(SIDEBOARD_SERIAL_USART2) || defined(SIDEBOARD_SERIAL_USART3)
     typedef struct{

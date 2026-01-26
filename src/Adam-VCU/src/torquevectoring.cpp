@@ -187,7 +187,7 @@ void TorqueVectoring::EstimateVehicleMotion(const TickContext& ctx, SenseData& s
     sortSmallN(sc.sorted, sc.numValid);
 
     const uint8_t n = sc.numValid;
-    const float vEps = ctx.params->TV.SlipSpeedEps;
+    const float vEps = ctx.params->TV.WheelMinRPM;
 
     // Robust measured reference speed v_ref_meas (abs) + motionSign (motor coords)
     float v_ref_meas = 0.f;
@@ -269,7 +269,7 @@ void TorqueVectoring::EstimateVehicleMotion(const TickContext& ctx, SenseData& s
     // --- Standstill handling ---
     // If we're basically standing still, keep a stable 0 reference and avoid "invented" speed.
 
-    if (m_vehicleSpeedAbs < vEps)
+    if (v_ref_meas < vEps)
     {
         if (sc.accel)
         {
@@ -317,7 +317,7 @@ void TorqueVectoring::UpdateSlipEnvelopes(const TickContext& ctx, SenseData& sd,
 {
     const auto& TV = ctx.params->TV;
     const float vRef = m_vehicleSpeedAbs;
-    const float vEps = TV.SlipSpeedEps;
+    const float vEps = TV.WheelMinRPM;
     const float minT = TV.SlipMinTorque;
     const float hard = std::max(TV.maxTorqueDrive, TV.maxTorqueBrake);
 
@@ -417,10 +417,68 @@ void TorqueVectoring::UpdateSlipEnvelopes(const TickContext& ctx, SenseData& sd,
 }
 
 // ============================================================================
-// TorqueVectoring::Sense()
-// - Orchestrates sensing sub-stages
-// - Returns SenseData for use by Compute()
+// TorqueVectoring::ApplyBrakeFadeCaps()
+// - Tightens brake-side envelope when wheel is near standstill
+// - Prevents braking torque from reversing a stopped wheel
+// - Works in motor coordinates: w > 0 → brake is capRev, w < 0 → brake is capFwd
+// - At true standstill (|w| < vEps), clamps brake side to ZERO (not minT)
 // ============================================================================
+void TorqueVectoring::ApplyBrakeFadeCaps(const TickContext &ctx, SenseData &sd)
+{
+    const auto &TV = ctx.params->TV;
+    const float vFade = TV.AntiReversingSpeed;
+
+    if (vFade <= 1.f)
+        return;
+
+    const float vEps = TV.WheelMinRPM;
+
+    for (int i = 0; i < 4; ++i)
+    {
+        const float wi = sd.wAbs[i];
+        const float ws = sd.w[i];
+
+        // First: if wheel is spinning OPPOSITE to gear direction, block the accelerating side
+        // This is a hard safety rule, independent of fade logic
+        if (ws * sd.gearDir < -vEps)
+        {
+            // Wheel going "wrong way" relative to gear
+            if (ws < 0.f)
+            {
+                // Wheel backward in D: block negative torque (would accelerate backward)
+                sd.capRev[i] = 0.f;
+            }
+            else
+            {
+                // Wheel forward in R: block positive torque (would accelerate forward)
+                sd.capFwd[i] = 0.f;
+            }
+            // Also fade the brake side if near standstill
+        }
+
+        if (wi >= vFade)
+            continue;
+
+        const float fadeScale = wi / vFade;
+
+        if (ws > vEps)
+        {
+            sd.capRev[i] = sd.capRev[i] * fadeScale;
+        }
+        else if (ws < -vEps)
+        {
+            sd.capFwd[i] = sd.capFwd[i] * fadeScale;
+        }
+        else
+        {
+            if (sd.gearDir > 0.f)
+                sd.capRev[i] = 0.f;
+            else
+                sd.capFwd[i] = 0.f;
+        }
+    }
+}
+
 TorqueVectoring::SenseData TorqueVectoring::Sense(const TickContext &ctx, Gear currGear)
 {
     SenseData sd{};
@@ -442,6 +500,10 @@ TorqueVectoring::SenseData TorqueVectoring::Sense(const TickContext &ctx, Gear c
 
     // === STAGE 4: Apply Speed Limiter ===
     ApplySpeedLimiter(ctx, currGear, sd);
+
+    // === STAGE 5: Apply Brake Fade Caps ===
+    if (sc.brake)
+        ApplyBrakeFadeCaps(ctx, sd);
 
     return sd;
 }
@@ -477,7 +539,7 @@ void TorqueVectoring::ApplySpeedLimiter(const TickContext& ctx, Gear currGear, S
         //  2) the wheel is significantly faster than the vehicle (outlier)
         //  3) we're in/near the limiter band (otherwise don't mess with it)
         
-        if (vRef > TV.SlipSpeedEps)
+        if (vRef > TV.WheelMinRPM)
         {
             if (wi > hiOutlier && wi > vStart)
                 vForCap = wi;
@@ -500,26 +562,36 @@ void TorqueVectoring::ApplySpeedLimiter(const TickContext& ctx, Gear currGear, S
     }
 }
 
-
 TorqueVectoring::PairSolve TorqueVectoring::SolvePairCaps(
     float TcReq, float TdReq,
     float capNegL, float capPosL,
-    float capNegR, float capPosR)
+    float capNegR, float capPosR,
+    float k) // 0 = no correction, 1 = full traction correction
 {
-    // Feasible Td range so that Tc interval is non-empty
+    // Traction-correcting Td: shifts torque toward the wheel with more headroom
+    // Positive when L has more headroom (capPosL > capPosR) → adds to L, subtracts from R
+    const float TdTraction = 0.5f * (capPosL - capPosR);
+
+    // Blend between driver request and traction correction
+    const float TdTarget = TdReq + k * TdTraction;
+
+    // Feasible Td range
     const float TdMin = 0.5f * (capNegL - capPosR);
     const float TdMax = 0.5f * (capPosL - capNegR);
 
-    float Td = std::clamp(TdReq, TdMin, TdMax);
+    float Td = std::clamp(TdTarget, TdMin, TdMax);
 
+    // Given that Td, find feasible Tc range
     const float TcMin = std::max(capNegL - Td, capNegR + Td);
     const float TcMax = std::min(capPosL - Td, capPosR + Td);
 
     float Tc = std::clamp(TcReq, TcMin, TcMax);
 
     PairSolve o{};
-    o.Tc = Tc; o.Td = Td;
-    o.TcMin = TcMin; o.TcMax = TcMax;
+    o.Tc = Tc;
+    o.Td = Td;
+    o.TcMin = TcMin;
+    o.TcMax = TcMax;
     o.L = Tc + Td;
     o.R = Tc - Td;
     return o;
@@ -547,7 +619,6 @@ TorqueVectoring::TrajectoryIntent TorqueVectoring::ComputeTrajectoryIntent(
     const TickContext& ctx, const SenseData& sense, Gear currGear)
 {
     const auto& TV = ctx.params->TV;
-    const float vRefAbs = sense.vehicleSpeedAbs;
 
     // === Normalize user inputs ===
     const float s = static_cast<float>(ctx.user.steering) / 1000.0f;   // convention: -left, +right
@@ -569,16 +640,20 @@ TorqueVectoring::TrajectoryIntent TorqueVectoring::ComputeTrajectoryIntent(
     }
     else
     {
-        const float bmag = -throttleInput; // positive magnitude
-
-        float brakeScale = 1.f;
-        if (TV.AntiReversingSpeed > 1.f)
-            brakeScale = std::clamp(vRefAbs / TV.AntiReversingSpeed, 0.f, 1.f);
+        const float bmag = -throttleInput;
 
         float msAlongGear = sense.motionSignAlongGear;
         if (std::fabs(msAlongGear) < 0.5f)
-            msAlongGear = +1.f; // fallback: assume "moving along gear"
-        Tc_total_req = (-msAlongGear) * bmag * brakeScale;
+        {
+            // At standstill: no active brake torque needed
+            // HoldFlags will handle holding the vehicle in place
+            Tc_total_req = 0.f;
+        }
+        else
+        {
+            // Moving: brake opposes motion
+            Tc_total_req = (-msAlongGear) * bmag;
+        }
     }
 
     // === Front/rear bias ===
@@ -655,17 +730,26 @@ TorqueVectoring::WheelTorques TorqueVectoring::SolveWheelTorques(
     const float TdF_req_m = intent.TdF;
     const float TdR_req_m = intent.TdR;
 
-    // Solve axle pairs under caps (prioritize Td over Tc)
-    // This preserves steering differential as much as traction allows
+    // Select traction correction factor based on accel vs brake
+    const float kFront = (TcF_req_m * sense.gearDir > 0)
+                             ? TV.TractionCorrectionASR
+                             : TV.TractionCorrectionABS;
+    const float kRear = (TcR_req_m * sense.gearDir > 0)
+                            ? TV.TractionCorrectionASR
+                            : TV.TractionCorrectionABS;
+
+    // Solve axle pairs under caps
     PairSolve front = SolvePairCaps(
         TcF_req_m, TdF_req_m,
         sense.capRev[FL], sense.capFwd[FL],
-        sense.capRev[FR], sense.capFwd[FR]);
+        sense.capRev[FR], sense.capFwd[FR],
+        kFront);
 
     PairSolve rear = SolvePairCaps(
         TcR_req_m, TdR_req_m,
         sense.capRev[RL], sense.capFwd[RL],
-        sense.capRev[RR], sense.capFwd[RR]);
+        sense.capRev[RR], sense.capFwd[RR],
+        kRear);
 
     // No cross-axle rebalancing.
     // Rationale:
@@ -685,12 +769,36 @@ TorqueVectoring::WheelTorques TorqueVectoring::SolveWheelTorques(
     return out;
 }
 
-// -----------------
-// Compute()
-// -----------------
-TorqueVectoring::Torques TorqueVectoring::Compute(const TickContext& ctx, const Gear& currGear)
+// ============================================================================
+// TorqueVectoring::ComputeHoldFlags()
+// - Computes per-wheel hold flags
+// - Hold = vehicle AND wheel both near standstill while braking
+// ============================================================================
+TorqueVectoring::HoldFlags TorqueVectoring::ComputeHoldFlags(
+    const TickContext &ctx,
+    const SenseData &sense)
 {
-    if (currGear == Gear::N || !ctx.params) return {};
+    const auto &TV = ctx.params->TV;
+    const float vHold = TV.AntiReversingHoldSpeed;
+    const bool braking = (ctx.user.throttle < 0);
+
+    HoldFlags hold = {};
+
+    if (braking)
+    {
+        hold.hFL = (sense.vehicleSpeedAbs < vHold && sense.wAbs[FL] < vHold);
+        hold.hFR = (sense.vehicleSpeedAbs < vHold && sense.wAbs[FR] < vHold);
+        hold.hRL = (sense.vehicleSpeedAbs < vHold && sense.wAbs[RL] < vHold);
+        hold.hRR = (sense.vehicleSpeedAbs < vHold && sense.wAbs[RR] < vHold);
+    }
+
+    return hold;
+}
+
+TorqueVectoring::Torques TorqueVectoring::Compute(const TickContext &ctx, const Gear &currGear)
+{
+    if (currGear == Gear::N)
+        return {};
 
     // === SENSE ===
     const SenseData sense = Sense(ctx, currGear);
@@ -699,7 +807,10 @@ TorqueVectoring::Torques TorqueVectoring::Compute(const TickContext& ctx, const 
     const TrajectoryIntent intent = ComputeTrajectoryIntent(ctx, sense, currGear);
 
     // === SOLVE CONSTRAINTS ===
-    const WheelTorques torques = SolveWheelTorques(ctx, sense, intent);
+    WheelTorques torques = SolveWheelTorques(ctx, sense, intent);
+
+    // === HOLD FLAGS ===
+    const HoldFlags hold = ComputeHoldFlags(ctx, sense);
 
     // === OUTPUT ===
     return {
@@ -707,6 +818,7 @@ TorqueVectoring::Torques TorqueVectoring::Compute(const TickContext& ctx, const 
         static_cast<int16_t>(torques.fr),
         static_cast<int16_t>(torques.rl),
         static_cast<int16_t>(torques.rr),
-        static_cast<int16_t>(sense.vehicleSpeedAbs)
-    };
+        static_cast<int16_t>(sense.vehicleSpeedAbs),
+        hold};
 }
+
