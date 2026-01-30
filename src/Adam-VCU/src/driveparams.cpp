@@ -90,7 +90,8 @@ namespace
         // =========================================================================
         // Braking near standstill
         // =========================================================================
-        {"AntiReversingSpeed", &DriveParams::TVParams::AntiReversingSpeed, 0.0f, 500.0f},
+        {"AntiReversingSpeed", &DriveParams::TVParams::AntiReversingSpeed, 0.0f, 100.0f},
+        {"AntiReversingHoldSpeed", &DriveParams::TVParams::AntiReversingHoldSpeed, 0.0f, 100.0f},
     };
 
     static constexpr uint16_t kTVParamCount =

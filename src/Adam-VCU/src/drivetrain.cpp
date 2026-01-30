@@ -240,121 +240,70 @@ DriveTrain::TickContext DriveTrain::BuildContext(uint32_t nowMs)
     return ctx;
 }
 
-DriveTrain::SafetyDecision DriveTrain::ControllerSafety(const TickContext& ctx, const VehicleState& state, const DriveTrain::Requests r)
-{
-    // ---- Melody handling (minimal state machine) ----------------------------
-
-    static constexpr uint8_t kIdleWarn[10] = {10, 0, 0, 0, 0, 1, 0, 0, 0, 0};
-    static constexpr uint8_t kCtrlWarn[10] = {2, 2, 0, 0, 2, 2, 0, 0, 2, 2};
-    static constexpr uint8_t kFail[10] = {15, 15, 0, 1, 1, 1, 1, 1, 1, 1};
-    static constexpr uint8_t kSuccess[10] = {1, 1, 0, 0, 5, 5, 5, 0, 0, 0};
-
-    struct Melody
-    {
-        const uint8_t *tones = nullptr; // points to one of the arrays above
-        uint8_t i = 10;                 // 10 == idle / finished
-    };
-    static Melody mel;
-    static uint8_t melSlowdown = 0;
-
-    auto isPlaying = [&]
-    { return mel.tones && mel.i < 10; };
-
-    auto startMelody = [&](const uint8_t *tones)
-    {
-        if (isPlaying())
-            return; // do not restart while playing
-        mel.tones = tones;
-        mel.i = 0;
-        melSlowdown = 0;
-    };
-    // ---- Safety logic --------------------------------------------------------
-
-    enum class Severity : uint8_t
-    {
-        Ok = 0,
-        Warn = 1,
-        Off = 2
-    };
-    SafetyDecision saf{};
-
-    auto evalOne = [&](const std::optional<Axle::HistoryFrame> &fb) -> Severity
-    {
-        if (!fb)
-            return Severity::Ok;
-        const auto &s = fb->sample;
-
+// Evaluate controller health - pure function, no side effects
+DriveTrain::Severity DriveTrain::EvalControllerHealth(const TickContext& ctx) {
+    auto evalOne = [&](const std::optional<Axle::HistoryFrame>& fb) -> Severity {
+        if (!fb) return Severity::Ok;
+        const auto& s = fb->sample;
+        
         if (s.batVoltage < ctx.params->Controller.VoltageOff ||
             s.boardTemp >= ctx.params->Controller.TempOff)
             return Severity::Off;
-
+        
         if (s.batVoltage < ctx.params->Controller.VoltageWarn ||
             s.boardTemp >= ctx.params->Controller.TempWarn)
             return Severity::Warn;
-
+        
         return Severity::Ok;
     };
+    
+    return std::max(evalOne(ctx.currFront), evalOne(ctx.currRear));
+}
 
-    // Explicit poweroff request
-    if (r.reqPowerOff)
-    {
-        saf.cmd = Axle::RemoteCommand::CmdPowerOff;
-        return saf;
+// Main safety method - now much cleaner
+DriveTrain::SafetyDecision DriveTrain::ControllerSafety(
+    const TickContext& ctx, const VehicleState& state, const Requests r)
+{
+    SafetyDecision saf{};
+    
+    // --- Check shutdown conditions first ---
+    if (r.reqPowerOff) {
+        return { .cmd = Axle::RemoteCommand::CmdPowerOff };
     }
-
-    // Idle-based shutdown
-    const uint32_t timeUserIdle = ctx.nowMs - state.lastUserInput;
-    if (timeUserIdle > SWConfig::UserBehaviour::MaxUserIdleBeforeShutdownMs)
-    {
-        saf.cmd = Axle::RemoteCommand::CmdPowerOff;
-        return saf;
+    
+    const uint32_t idleTime = ctx.nowMs - state.lastUserInput;
+    if (idleTime > SWConfig::UserBehaviour::MaxUserIdleBeforeShutdownMs) {
+        return { .cmd = Axle::RemoteCommand::CmdPowerOff };
     }
-
-    // Evaluate both controllers
-    Severity sev = std::max(evalOne(ctx.currFront), evalOne(ctx.currRear));
-    if (sev == Severity::Off)
-    {
-        saf.cmd = Axle::RemoteCommand::CmdPowerOff;
-        return saf;
+    
+    Severity health = EvalControllerHealth(ctx);
+    if (health == Severity::Off) {
+        return { .cmd = Axle::RemoteCommand::CmdPowerOff };
     }
-
-    // ---- Decide which melody is requested (priority by overwrite) -----------
-
-    const uint8_t *req = nullptr;
-
-    if (timeUserIdle > SWConfig::UserBehaviour::MaxUserIdleWarnMs)
-    {
-        req = kIdleWarn;
+    
+    // --- Determine beep priority ---
+    const uint8_t* requestedMelody = nullptr;
+    
+    if (idleTime > SWConfig::UserBehaviour::MaxUserIdleWarnMs)
+        requestedMelody = MelodyPlayer::kIdleWarn;
+    
+    if (health == Severity::Warn || !ctx.currFront || !ctx.currRear)
+        requestedMelody = MelodyPlayer::kCtrlWarn;
+    
+    if (r.beep == BeepRequest::BeepFailure)
+        requestedMelody = MelodyPlayer::kFail;
+    else if (r.beep == BeepRequest::BeepSuccess)
+        requestedMelody = MelodyPlayer::kSuccess;
+    
+    if (requestedMelody)
+        melody.start(requestedMelody);
+    
+    // --- Apply melody if playing ---
+    if (auto tone = melody.tick()) {
+        saf.cmd = Axle::RemoteCommand::CmdBeep;
+        saf.payload = *tone;
     }
-
-    if (sev == Severity::Warn || !ctx.currFront || !ctx.currRear)
-    {
-        req = kCtrlWarn;
-    }
-
-    // user request beeps override warnings
-    if (r.beep != BeepRequest::NoBeep)
-    {
-        req = (r.beep == BeepRequest::BeepFailure) ? kFail : kSuccess;
-    }
-
-    if (req)
-    {
-        startMelody(req);
-    }
-
-    // ---- Advance melody ------------------------------------------------------
-
-    if (isPlaying())
-    {
-        saf.warningBeep = mel.tones[mel.i];
-        if (++melSlowdown == 5)
-        {
-            melSlowdown = 0;
-            ++mel.i;
-        }
-    }
-
+    
     return saf;
 }
 
@@ -458,9 +407,7 @@ DriveTrain::TickDecision DriveTrain::ComputeDecision(const TickContext& ctx, Veh
     state.vehicleSpeed = dec.torques.vehicleSpeedAbs;
 
     // 4) safety command
-    SafetyDecision saf = ControllerSafety(ctx, state, r);
-    dec.cmd = saf.cmd;
-    dec.beep = max(dec.beep, saf.warningBeep);
+    dec.safeCmd = ControllerSafety(ctx, state, r);
 
     // 5) lights intent
     ComputeLights(ctx, dec, state);
@@ -476,9 +423,8 @@ void DriveTrain::ApplyDecision(const TickDecision& dec, VehicleState& state)
     uint8_t holdFlagsR = (dec.torques.hold.hRL ? Axle::FLG_STANDSTILL_FORCE_L : 0) |
                          (dec.torques.hold.hRR ? Axle::FLG_STANDSTILL_FORCE_R : 0);
 
-    axleF.Send(dec.torques.fl, dec.torques.fr, dec.cmd, dec.beep, holdFlagsF);
-    axleR.Send(dec.torques.rl, dec.torques.rr, dec.cmd, dec.beep, holdFlagsR);
-
+    axleF.Send(dec.torques.fl, dec.torques.fr, holdFlagsF, dec.safeCmd.cmd, dec.safeCmd.payload);
+    axleR.Send(dec.torques.rl, dec.torques.rr, holdFlagsR, dec.safeCmd.cmd, dec.safeCmd.payload);
 
     // Lights
     if (dec.failSafe) {

@@ -16,6 +16,7 @@ public:
         CmdEnableMotors = 3,
         CmdSetCurrentLimit = 10, // flag field = current limit in 1/10th Amps (0-255, e.g., 45 = 4.5A)
         CmdSetSpeedLimit = 11,   // flag field = speed limit in RPM / 4 (0-255, e.g., 250 = 1000 RPM)
+        CmdBeep = 12
     };
 
     static constexpr uint8_t encodeFlags(uint8_t beepFreq, uint8_t flg4bit) {
@@ -29,8 +30,9 @@ public:
         uint16_t start;
         int16_t  motR;
         int16_t  motL;
-        uint8_t  cmd;
         uint8_t  flags;
+        uint8_t  cmd;
+        uint8_t  payload;
         uint16_t checksum;
     } __attribute__((packed));
 
@@ -62,15 +64,6 @@ public:
     };
 
     typedef std::optional<HistoryFrame> MotorStates;
-
-    struct MotorCommand {
-        int16_t motL;
-        int16_t motR;
-        uint8_t func = RemoteCommand::CmdNOP;
-        uint8_t beep  = 0;
-        uint8_t flags = 0;
-    };
-
     static constexpr unsigned long HoverSerialBaud = 115200;
     static constexpr uint16_t StartFrame = 0xABCD;
     static constexpr uint8_t BufferLenRecv = sizeof(SerialFeedback) * 2 - 1;
@@ -79,7 +72,7 @@ public:
 
     Axle(uart_port_t hwSerialNum, uint8_t pinRX, uint8_t pinTX);
     void Shutdown();
-    bool Send(int16_t motL, int16_t motR, uint8_t cmd = CmdNOP, uint8_t beep = 0, uint8_t flags = 0);
+    bool Send(int16_t motL, int16_t motR, uint8_t flags, Axle::RemoteCommand cmd = Axle::RemoteCommand::CmdNOP, uint8_t payload = 0);
     bool WaitForFeedback(HistoryFrame& out, TickType_t timeout);
     MotorStates GetLatestFeedback();
     MotorStates GetLatestFeedback(uint32_t currTime);
@@ -98,5 +91,4 @@ protected:
     uint8_t ProcessFeedbackFrame(uint8_t* buffer, size_t len);
     bool PushFeedback(const SerialFeedback& fb);
     void ReadTask();
-    void SendInternal(int16_t motL, int16_t motR, uint8_t remoteCmd, uint8_t beep, uint8_t flags);
 };

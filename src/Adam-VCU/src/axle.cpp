@@ -11,7 +11,7 @@ conn(hwSerialNum)
     feedbackQueue = xQueueCreate(1, sizeof(HistoryFrame));
     configASSERT(feedbackQueue != nullptr);
 
-    commandQueue = xQueueCreate(1, sizeof(MotorCommand));
+    commandQueue = xQueueCreate(1, sizeof(SerialCommand));
     configASSERT(commandQueue != nullptr);
 
 
@@ -76,28 +76,20 @@ void Axle::Shutdown()
 
 }
 
-
-
-void Axle::SendInternal(int16_t motL, int16_t motR, uint8_t remoteCmd, uint8_t beep, uint8_t flags)
-{
-    SerialCommand command;
-    // Create command
-    command.start   = Axle::StartFrame;
-    command.motR    = motR;
-    command.motL    = motL;
-    command.cmd     = remoteCmd;
-    command.flags   = encodeFlags(beep, flags);
-    command.checksum = (uint16_t)(command.start ^ command.motR ^ command.motL ^ command.cmd ^ command.flags);
-
-    // Write to Serial
-    uart_write_bytes(conn, reinterpret_cast<const char*>(&command), sizeof(SerialCommand));
-}
-
-
 // Push latest command into size-1 queue
-bool Axle::Send(int16_t motL, int16_t motR, uint8_t cmd, uint8_t beep, uint8_t flags)
+bool Axle::Send(int16_t motL, int16_t motR, uint8_t flags, Axle::RemoteCommand cmd, uint8_t payload)
 {
-    MotorCommand packet{motL, motR, cmd, beep, flags};
+    SerialCommand packet;
+    packet.motL = motL;
+    packet.motR = motR;
+    packet.flags = flags;
+    packet.cmd = cmd;
+    packet.payload = payload;
+
+    // prepare to send
+    packet.start = Axle::StartFrame;
+    packet.checksum = (uint16_t)(packet.start ^ packet.motR ^ packet.motL ^ packet.flags ^ packet.cmd ^ packet.payload);
+
     // Overwrite last command, never blocks
     BaseType_t res = xQueueOverwrite(commandQueue, &packet);
     return (res == pdPASS);
@@ -206,12 +198,14 @@ void Axle::ReadTask()
 
 void Axle::SendEventHandler()
 {
-    MotorCommand cmd;
+    SerialCommand ser;
 
     for (;;) {
         // Get latest command if available, otherwise keep previous or default
-        if (xQueueReceive(commandQueue, &cmd, portMAX_DELAY) == pdTRUE) {
-            SendInternal(cmd.motL, cmd.motR, cmd.func, cmd.beep, cmd.flags);
+        if (xQueueReceive(commandQueue, &ser, portMAX_DELAY) == pdTRUE) {
+           
+            // Write to Serial
+            uart_write_bytes(conn, reinterpret_cast<const char *>(&ser), sizeof(SerialCommand));
         }
         
     }

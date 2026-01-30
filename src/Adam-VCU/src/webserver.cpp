@@ -12,6 +12,7 @@ WebServer::WebServer()
 
 bool WebServer::begin(const IPAddress& apIp, const char* hostname, QueueHandle_t statusQueue, DriveTrain* drive, uint32_t updateInterval)
 {
+  //TODO: We also need a way to stop the webserver so that it doesn't interfer with OTA
   if (_started) return false;
 
   _apIp = apIp;

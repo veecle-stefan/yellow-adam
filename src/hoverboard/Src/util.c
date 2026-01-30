@@ -889,10 +889,12 @@ void readInputRaw(void) {
         input1[inIdx].raw = (ibusL_captured_value[0] - 500) * 2;
         input2[inIdx].raw = (ibusL_captured_value[1] - 500) * 2; 
       #else
-        input1[inIdx].raw = commandL.steer;
-        input2[inIdx].raw = commandL.speed;
-          
+        input1[inIdx].raw = commandL.motR;
+        input2[inIdx].raw = commandL.motL;
+        commandFlags = commandL.flags;
+
         // process the commands
+        commandBeep = 0;
         switch (commandL.cmd)
         {
         case CmdPowerOff:
@@ -911,29 +913,29 @@ void readInputRaw(void) {
 
         case CmdSetCurrentLimit:
           // flag field contains current limit in Amps (1-15A typical)
-          if (commandL.flag > 0 && commandL.flag / 10 <= I_MOT_MAX)
+          if (commandL.payload > 0 && commandL.payload / 10 <= I_MOT_MAX)
           {
-            rtP_Left.i_max = rtP_Right.i_max = (int16_t)((commandL.flag * A2BIT_CONV / 10) << 4);
+            rtP_Left.i_max = rtP_Right.i_max = (int16_t)((commandL.payload * A2BIT_CONV / 10) << 4);
           }
           break;
 
         case CmdSetSpeedLimit:
           // flag field contains speed limit: RPM = flag * 4 (so 250 = 1000 RPM)
-          if (commandL.flag > 0)
+          if (commandL.payload > 0)
           {
-            int16_t rpm = (int16_t)commandL.flag * 4;
+            int16_t rpm = (int16_t)commandL.payload * 4;
             if (rpm > N_MOT_MAX)
               rpm = N_MOT_MAX;
             rtP_Left.n_max = rtP_Right.n_max = (int16_t)(rpm << 4);
           }
           break;
-        case CmdNOP:
-          {
-            // process the flags
-            uint8_t beeps = commandL.flag >> 4;
-            commandFlags = commandL.flag & 0x0F;
-            commandBeep = (beeps == 0) ? 0 : 32 - (beeps << 1);
+        case CmdBeep:
+          // process the flags
+          if (commandL.payload < 32) {
+            commandBeep = 32 - commandL.payload;
           }
+          break;
+        case CmdNOP:
           break;
         }
       
@@ -1347,7 +1349,7 @@ void usart_process_command(SerialCommand *command_in, SerialCommand *command_out
   #else
   uint16_t checksum;
   if (command_in->start == SERIAL_START_FRAME) {
-    checksum = (uint16_t)(command_in->start ^ command_in->steer ^ command_in->speed ^ command_in->cmd ^ command_in->flag) ;
+    checksum = (uint16_t)(command_in->start ^ command_in->motR ^ command_in->motL ^ command_in->flags ^ command_in->cmd ^ command_in->payload) ;
     if (command_in->checksum == checksum) {
       *command_out = *command_in;
       if (usart_idx == 2) {             // Sideboard USART2

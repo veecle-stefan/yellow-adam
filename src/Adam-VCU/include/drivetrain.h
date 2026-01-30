@@ -8,8 +8,7 @@
 #include "rcinput.h"
 #include "driveparams.h"
 #include "torquevectoring.h"
-
-
+#include "melodyplayer.h"
 
 class DriveTrain
 {
@@ -120,19 +119,26 @@ protected :
     using UserCmd = TorqueVectoring::UserCmd;
     using UserInput = RCinput::UserInput;
 
+    enum class Severity : uint8_t
+    {
+        Ok = 0,
+        Warn = 1,
+        Off = 2
+    };
+
+    struct SafetyDecision
+    {
+        Axle::RemoteCommand cmd = Axle::RemoteCommand::CmdNOP;
+        uint8_t payload = 0;
+    };
+
     struct TickDecision {
         TorqueVectoring::Torques torques{};
-        Axle::RemoteCommand cmd = Axle::RemoteCommand::CmdNOP;
-        //TODO: Implment a clean structure with always (cmd+payload) and no strange beep/flag encoding, e.g. split cmd byte in flags (up to 16 commands is enough)
-        uint8_t beep = 0;
+        SafetyDecision safeCmd;
         bool failSafe = false;
     };
 
-    struct SafetyDecision {
-        Axle::RemoteCommand cmd = Axle::RemoteCommand::CmdNOP;
-        uint8_t warningBeep = 0;
-    };
-
+ 
     struct Requests {
         BeepRequest beep = BeepRequest::NoBeep;
         bool reqPowerOff = false;
@@ -153,6 +159,8 @@ protected :
     MotorStates lastFrontFb;
     MotorStates lastRearFb;
 
+    MelodyPlayer melody;
+
     // ----- Background control task -----
     void ControlTask();
 
@@ -167,6 +175,7 @@ protected :
     void PublishStatus(const TickContext& ctx, const TickDecision& dec, const VehicleState& state);
 
     static UserCmd        ReadUserCmd(UserInput ch1, UserInput ch2, UserInput ch3, uint32_t nowMs);
-    static SafetyDecision ControllerSafety(const TickContext& ctx, const VehicleState& state, const DriveTrain::Requests r);
+    static Severity EvalControllerHealth(const TickContext &ctx);
+    SafetyDecision ControllerSafety(const TickContext &ctx, const VehicleState &state, const DriveTrain::Requests r);
     static void           ComputeLights(const TickContext& ctx, TickDecision& dec,  VehicleState& state);
 };

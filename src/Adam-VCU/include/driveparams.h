@@ -153,8 +153,8 @@ struct DriveParams
 
         // Fade braking torque to zero as |wheel speed| approaches 0 to avoid reversing a stopped wheel.
         // Units: wheel-speed units. (Used by brakeScale = |w|/AntiReversingSpeed, clamped 0..1)
-        float AntiReversingSpeed = 50.f;
-        float AntiReversingHoldSpeed = 30.f;
+        float AntiReversingSpeed = 60.f;
+        float AntiReversingHoldSpeed = 5.f;
     } TV;
 
     // Convenience: constexpr-like default instance (still mutable at runtime).

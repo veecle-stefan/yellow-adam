@@ -43,15 +43,17 @@ typedef enum
   CmdEnableMotors = 3,
   CmdSetCurrentLimit = 10, // flag field = current limit in 1/10th Amps (0-255, e.g., 45 = 4.5A)
   CmdSetSpeedLimit = 11,   // flag field = speed limit in RPM / 4 (0-255, e.g., 250 = 1000 RPM)
+  CmdBeep = 12
 } RemoteCommand;
 #define FLG_STANDSTILL_L 0x01
 #define FLG_STANDSTILL_R 0x02
     typedef struct{
       uint16_t  start;
-      int16_t   steer;
-      int16_t   speed;
+      int16_t   motR;
+      int16_t   motL;
+      uint8_t   flags;
       uint8_t   cmd;
-      uint8_t   flag;
+      uint8_t   payload;
       uint16_t  checksum;
     } __attribute__((packed)) SerialCommand;
 #endif

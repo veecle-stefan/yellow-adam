@@ -241,7 +241,8 @@ const tuningKeys = [
     { id: 29, name: 'FrontRearBiasFullTorqueBrake', min: 0.0, max: 1000.0 },
 
     // ----- Braking near standstill
-    { id: 30, name: 'AntiReversingSpeed', min: 0.0, max: 500.0 },
+    { id: 30, name: 'AntiReversingSpeed', min: 0.0, max: 100.0 },
+    { id: 31, name: 'AntiReversingHoldSpeed', min: 0.0, max: 100.0 },
 ];
 
 // Persist last values locally so the input is populated when switching params.
@@ -283,7 +284,8 @@ const tuningLast = {
     29: 300.0, // FrontRearBiasFullTorqueBrake
 
     // braking near standstill
-    30: 100.0, // AntiReversingSpeed
+    30: 50.0, // AntiReversingSpeed
+    31: 30.0, // AntiReversingHoldSpeed
 };
 
 const tuneKeyEl = document.getElementById('tune_key');
