@@ -1,4 +1,3 @@
-#include <Arduino.h>
 #include "swconfig.h"
 #include "webserver.h"
 
@@ -146,7 +145,7 @@ void WebServer::tidy() {
     auto it = _wsLastSeen.find(c.id());
     const bool stale = (it == _wsLastSeen.end()) || ((now - it->second) > WSIdleTimeout);
     if (stale) {
-      Serial.printf("[WS] #%u stale -> closing\n", c.id());
+      Serial.printf("[WS] #%lu stale -> closing\n", c.id());
       c.close();
       _wsLastSeen.erase(c.id());
     }

@@ -1,8 +1,5 @@
 #pragma once
-
-#include <Arduino.h>
 #include <optional>
-
 #include "axle.h"
 #include "lights.h"
 #include "rcinput.h"

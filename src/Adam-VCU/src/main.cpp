@@ -1,5 +1,7 @@
-#include <Arduino.h>
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wshadow" // ArduinoOTA specific fix
 #include <ArduinoOTA.h>
+#pragma GCC diagnostic pop
 #include <WiFi.h>
 #include "drivetrain.h"
 #include "webserver.h"

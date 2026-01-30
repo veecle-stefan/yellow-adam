@@ -1,6 +1,4 @@
 #pragma once
-
-#include <Arduino.h>
 #include <deque>
 #include <optional>
 
@@ -80,7 +78,7 @@ public:
 protected:
     uart_port_t conn;
     byte recvBuffer[BufferLenRecv];
-    uint8_t recvCap = 0;
+    int recvCap = 0;
     QueueHandle_t feedbackQueue;  // size = 1
     QueueHandle_t commandQueue;   // size = 1
     TaskHandle_t receiverTask = NULL;

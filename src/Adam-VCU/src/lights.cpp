@@ -153,6 +153,8 @@ void Lights::UpdateLights()
                 HeadLights[5] = HeadLights[8] = ColDRL;
                 HeadLights[6] = HeadLights[7] = ColDRL;
                 break;
+            case Off:
+                break; // Off is already default state
         }
     }
     

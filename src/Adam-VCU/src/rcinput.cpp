@@ -17,9 +17,12 @@ esp_err_t RCinput::Begin() {
         .clk_src = RMT_CLK_SRC_DEFAULT,
         .resolution_hz = 1'000'000,
         .mem_block_symbols = SYMBOL_BUF_LEN,
+        .intr_priority = 0,
         .flags = {
             .invert_in = false,
-            .with_dma  = false,
+            .with_dma = false,
+            .io_loop_back = false,
+            .allow_pd = false
         },
     };
 

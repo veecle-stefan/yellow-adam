@@ -1,5 +1,4 @@
 #pragma once
-#include <Arduino.h>
 #include <optional>
 #include "axle.h"
 #include "rcinput.h"

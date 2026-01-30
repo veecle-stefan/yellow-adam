@@ -1,5 +1,11 @@
 #pragma once
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wshadow" // FastLED specific fix
+#pragma GCC diagnostic ignored "-Wpedantic" // FastLED specific fix
+#pragma GCC diagnostic ignored "-Wconversion" // FastLED specific fix
+#pragma GCC diagnostic ignored "-Wfloat-conversion" // FastLED specific fix
 #include <FastLED.h>
+#pragma GCC diagnostic pop
 #include "hwconfig.h"
 
 

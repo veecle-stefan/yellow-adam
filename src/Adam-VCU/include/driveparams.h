@@ -45,7 +45,7 @@ struct DriveParams
         float maxTorqueDrive = 250.f;
 
         // Absolute max commanded brake torque magnitude (|−|) per wheel (before envelopes).
-        // Units: torque command units. (Negative torques are braking.)
+        // Units: torque command units.
         float maxTorqueBrake = 600.f;
 
         // Max allowed vehicle speed in forward / reverse (wheel-speed units).
@@ -53,7 +53,7 @@ struct DriveParams
         float maxSpeedRev = 60.f;
 
         // Soft fade band below maxSpeed* where speed limiting starts (wheel-speed units).
-        // Example: maxSpeedRev=60, FadeBand=30 => start fading at 30..60.
+        // Example: maxSpeedRev=70, FadeBand=30 => start fading at 40..70.
         float SpeedLimiterFadeBand = 30.f;
 
         // =========================================================================
@@ -65,7 +65,7 @@ struct DriveParams
         float MaxTorquePerTick = 50.f;
 
         // Front axle differential torque limit (primary steering actuator).
-        // Convention (your codebase): s>0 (right) => more torque on FL, opposing on FR.
+        // Convention: s>0 (right) => more torque on FL, opposing on FR.
         float SteerTorqueFront = 220.f;
 
         // Rear axle differential torque limit (yaw assist, not primary steering).
@@ -125,7 +125,7 @@ struct DriveParams
         float TractionCorrectionABS = 0.25f;
 
         // Maximum plausible change in the estimated vehicle speed per tick.
-        // Units: wheel-speed units per tick. Used to reject outliers (“teleporting”).
+        // Units: wheel-speed units per tick. Used to reject outliers ("teleporting").
         float maxRealisticAccel = 30.f;
         float maxRealisticDecel = 40.f;
 
@@ -135,11 +135,11 @@ struct DriveParams
 
         // Front axle share under DRIVE: ramps from Low -> High as |Tc_total_req| increases.
         // (Low torque = more front, high torque = more rear) depending on chosen defaults.
-        float DriveFrontShareLow = 0.55f;
+        float DriveFrontShareLow = 0.50f;
         float DriveFrontShareHigh = 0.30f;
 
         // Front axle share under BRAKE: ramps from Low -> High as |Tc_total_req| increases.
-        float BrakeFrontShareLow = 0.60f;
+        float BrakeFrontShareLow = 0.50f;
         float BrakeFrontShareHigh = 0.80f;
 
         // Torque magnitude where the front/rear share reaches the “High” setting (uBias=1).

@@ -1,12 +1,15 @@
 #pragma once
-
-#include <Arduino.h>
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wshadow" // wifi.h specific fix
+#pragma GCC diagnostic ignored "-Wpedantic" // wifi.h specific fix
+#pragma GCC diagnostic ignored "-Wconversion" // ESPAsyncWebServer.h specific fix
 #include <WiFi.h>
+#include <ESPAsyncWebServer.h>
+#pragma GCC diagnostic pop
 #include <DNSServer.h>
 #include <LittleFS.h>
 #include <unordered_map>
 #include <AsyncTCP.h>
-#include <ESPAsyncWebServer.h>
 #include "drivetrain.h"
 #include "JSONrw.h"
 
