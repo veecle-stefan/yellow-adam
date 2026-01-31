@@ -254,8 +254,8 @@ const tuningLast = {
 
     // steering
     5: 50.0, // MaxTorquePerTick
-    6: 220.0, // SteerTorqueFront
-    7: 260.0, // SteerTorqueRear
+    6: 180.0, // SteerTorqueFront
+    7: 150.0, // SteerTorqueRear
     8: 1.0, // SteerTorqueLowFactor
     9: 0.7, // SteerTorqueHighFactor
     10: 30.0, // SteerTorqueHighSpeed
@@ -269,23 +269,23 @@ const tuningLast = {
     16: 0.7, // SlipDownFactor
     17: 50.0, // SlipMinTorque
     18: 50.0, // SlipRecoverTorquePerTick
-    19: 20.0, // WheelMinRPM
+    19: 35.0, // WheelMinRPM
     20: 0.75, // TractionCorrectionASR
     21: 0.25, // TractionCorrectionABS
     22: 30.0, // maxRealisticAccel
     23: 40.0, // maxRealisticDecel
 
     // bias
-    24: 0.55, // DriveFrontShareLow
+    24: 0.50, // DriveFrontShareLow
     25: 0.3, // DriveFrontShareHigh
-    26: 0.6, // BrakeFrontShareLow
+    26: 0.5, // BrakeFrontShareLow
     27: 0.8, // BrakeFrontShareHigh
     28: 150.0, // FrontRearBiasFullTorqueDrive
     29: 300.0, // FrontRearBiasFullTorqueBrake
 
     // braking near standstill
-    30: 50.0, // AntiReversingSpeed
-    31: 30.0, // AntiReversingHoldSpeed
+    30: 60.0, // AntiReversingSpeed
+    31: 10.0, // AntiReversingHoldSpeed
 };
 
 const tuneKeyEl = document.getElementById('tune_key');
@@ -722,12 +722,42 @@ class WebSocketTransport {
         this.ws = null;
         this._reconnectTimer = 0;
         this._hbTimer = 0;
+        this._openTimer = 0;
     }
+
+     _clearOpenTimer() {
+        clearTimeout(this._openTimer); this._openTimer = 0;
+      }
+
     connect() {
         this.onState?.('connecting');
-        this.ws = new WebSocket(this.url);
+        
+    try {
+        if (this.ws) {
+            this.ws.onopen = null;
+            this.ws.onclose = null;
+            this.ws.onerror = null;
+            this.ws.onmessage = null;
+            try { this.ws.close(); } catch {}
+            this.ws = null;
+        }
+    } catch {}
+    clearInterval(this._hbTimer); this._hbTimer = 0;
 
+    this.ws = new WebSocket(this.url);
+    // abort if we don't reach open in N ms
+    this._openTimer = setTimeout(() => {
+      if (!this.ws || this.ws.readyState === WebSocket.OPEN) return;
+      console.warn('WS open timeout -> aborting and retrying');
+      try { this.ws.onopen = null; this.ws.onclose = null; this.ws.onerror = null; this.ws.close(); } catch {}
+      this._clearOpenTimer();
+      // schedule reconnect (same behavior as onclose)
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = setTimeout(() => this.connect(), 800);
+    }, 10000); // 10s
+        
         this.ws.onopen = () => {
+            this._clearOpenTimer();
             this.onState?.('connected');
 
             // ---- HEARTBEAT START ----
@@ -741,6 +771,7 @@ class WebSocketTransport {
         };
 
         this.ws.onclose = () => {
+            this._clearOpenTimer();
             this.onState?.('disconnected');
 
             // ---- HEARTBEAT STOP ----
@@ -753,6 +784,7 @@ class WebSocketTransport {
         };
 
         this.ws.onerror = () => {
+            this._clearOpenTimer();
             try {
                 this.ws.close();
             } catch {}
@@ -765,6 +797,8 @@ class WebSocketTransport {
         }
     }
     close() {
+        this._clearOpenTimer();
+
         clearTimeout(this._reconnectTimer);
         this._reconnectTimer = 0;
 
@@ -772,7 +806,14 @@ class WebSocketTransport {
         this._hbTimer = 0;
 
         try {
-            this.ws?.close();
+            if (this.ws) {
+                this.ws.onopen = null;
+                this.ws.onclose = null;
+                this.ws.onerror = null;
+                this.ws.onmessage = null;
+                this.ws.close();
+                this.ws = null;
+            }
         } catch {}
     }
 }

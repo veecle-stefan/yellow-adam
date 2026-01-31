@@ -15,7 +15,7 @@
 
 class WebServer {
 public:
-  static constexpr uint32_t WSIdleTimeout = 10000; // after 10s
+  static constexpr uint32_t WSIdleTimeout = 30000; // after 30s
   static constexpr uint32_t TidyEveryMs = 1000;   // tune: 250..1000ms
   static constexpr size_t WSTextBufferSize = 400;
 

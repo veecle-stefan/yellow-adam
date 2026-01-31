@@ -76,7 +76,11 @@ static inline float computeFrontSteeringDiff(
     float uf = (steerTorqueHighSpeed > 1.f) ? (vFrontAbs / steerTorqueHighSpeed) : 1.f;
     uf = std::clamp(uf, 0.f, 1.f);
     const float kSteer = std::lerp(steerTorqueLowFactor, steerTorqueHighFactor, uf);
-    return steering * steerTorqueFront * kSteer;
+
+    // non-linear (quadratic) shaping: softer near center, still reaches max at full stick
+    const float sAbs = std::fabs(steering);
+    const float shaped = sAbs * sAbs; // use sAbs^2
+    return std::copysign(shaped * steerTorqueFront * kSteer, steering);
 }
 
 // Helper: compute rear yaw assist differential request
@@ -97,19 +101,10 @@ static inline float computeRearYawAssist(
         uLong = (rearEffAbs - rearFadeTorque0) / (rearFadeTorque1 - rearFadeTorque0);
         uLong = std::clamp(uLong, 0.f, 1.f);
     }
-
-    // TODO: Could be a params.TV configuration
-    const float s0 = 0.05f;
-    const float s1 = 0.25f;
-    float uSteer = (absS - s0) / (s1 - s0);
-    uSteer = std::clamp(uSteer, 0.f, 1.f);
-
-    const float fadeRear = us * std::max(uLong, uSteer);
+    // conservative product: both speed and rear-longitudinal conditions must be met
+    const float fadeRear = us * uLong;   // both in [0..1]
     const float oppMag = absS * steerTorqueRear;
-
-    // SIGN: s>0 => TdR>0 => RR reduced / can go negative
-    //       s<0 => TdR<0 => RL reduced / can go negative
-    return ((steering > 0.f) ? (+oppMag) : (-oppMag)) * fadeRear;
+    return std::copysign(oppMag * fadeRear, steering);
 }
 
 // ============================================================================

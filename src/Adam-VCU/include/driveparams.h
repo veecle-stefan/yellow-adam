@@ -66,10 +66,10 @@ struct DriveParams
 
         // Front axle differential torque limit (primary steering actuator).
         // Convention: s>0 (right) => more torque on FL, opposing on FR.
-        float SteerTorqueFront = 220.f;
+        float SteerTorqueFront = 180.f;
 
         // Rear axle differential torque limit (yaw assist, not primary steering).
-        float SteerTorqueRear = 260.f;
+        float SteerTorqueRear = 150.f;
 
         // Steering gain at very low speed (rack stiction / centering spring).
         float SteerTorqueLowFactor = 1.f;
@@ -112,7 +112,7 @@ struct DriveParams
 
         // Minimum reference speed needed to use ratio-based slip detection (noise floor).
         // Units: wheel-speed units.
-        float WheelMinRPM = 20.f;
+        float WheelMinRPM = 35.f;
 
         // Traction correction factor under ASR (acceleration slip).
         // 0 = equal torque L/R (conservative), 1 = full shift to gripping wheel (max thrust).
@@ -154,7 +154,7 @@ struct DriveParams
         // Fade braking torque to zero as |wheel speed| approaches 0 to avoid reversing a stopped wheel.
         // Units: wheel-speed units. (Used by brakeScale = |w|/AntiReversingSpeed, clamped 0..1)
         float AntiReversingSpeed = 60.f;
-        float AntiReversingHoldSpeed = 5.f;
+        float AntiReversingHoldSpeed = 10.f;
     } TV;
 
     // Convenience: constexpr-like default instance (still mutable at runtime).

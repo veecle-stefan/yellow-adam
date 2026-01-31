@@ -206,7 +206,8 @@ void WebServer::_setupWebSocket()
         xSemaphoreTake(_wsMutex, portMAX_DELAY);
         _wsLastSeen[client->id()] = now;
         xSemaphoreGive(_wsMutex);
-
+        
+        client->keepAlivePeriod(10);
         client->text("{\"type\":\"hello\",\"msg\":\"connected\"}");
         break;
 
@@ -236,7 +237,12 @@ void WebServer::_setupWebSocket()
         if (_wsCb) _wsCb(msg);
         break;
       }
-
+      case WS_EVT_PONG:
+        xSemaphoreTake(_wsMutex, portMAX_DELAY);
+        _wsLastSeen[client->id()] = now;
+        xSemaphoreGive(_wsMutex);
+        break;
+    
       default:
         break;
     }
