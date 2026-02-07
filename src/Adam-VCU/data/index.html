@@ -163,10 +163,14 @@
     }
     details.limits[open] > summary::after{ content: "▴"; }
     .limitsBody{ padding: 12px 14px 14px; border-top:1px solid var(--line); display:flex; flex-direction:column; gap: 12px; }
+    .tuneGrid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    @media (max-width:640px){
+      .tuneGrid{ grid-template-columns:1fr; }
+    }
     .lrow{ display:grid; grid-template-columns: 110px 1fr auto; gap: 10px; align-items:center; }
     .lrow label{ color: rgba(138,147,166,0.9); font-weight: 900; }
     .lrow .out{ font-variant-numeric: tabular-nums; font-weight: 1000; color: rgba(233,236,241,0.92); min-width: 56px; text-align:right; }
-    .lrow select, .lrow input[type="number"]{
+    .lrow select, .lrow input{
       width: 100%;
       padding: 8px 10px;
       border-radius: 12px;
@@ -352,17 +356,18 @@
     <span>Tuning</span>
     <span style="color:rgba(138,147,166,0.9); font-weight:900; font-size:12px;">TV params (id-based)</span>
   </summary>
-
   <div class="limitsBody" style="gap:14px;">
-    <div class="lrow" style="grid-template-columns:110px 1fr;">
-      <label for="tune_key">Parameter</label>
-      <select id="tune_key"></select>
-    </div>
+    <div class="tuneGrid">
+      <div class="lrow" style="grid-template-columns:110px 1fr;">
+        <label for="tune_key">Parameter</label>
+        <select id="tune_key"></select>
+      </div>
 
-    <div class="lrow">
-      <label for="tune_value">Value</label>
-      <input id="tune_value" type="number" step="0.001" />
-      <span class="out" id="tune_value_out">—</span>
+      <div class="lrow">
+        <label for="tune_value">Value</label>
+        <input id="tune_value" type="number" step="0.001" />
+        <span class="out" id="tune_value_out">—</span>
+      </div>
     </div>
 
     <div class="lrow">
@@ -373,6 +378,20 @@
 
     <div class="limitsActions">
       <button class="primary" id="btn_send_tune" type="button">Send tuning</button>
+    </div>
+    <div class="tuneGrid">
+      <div class="lrow" style="grid-template-columns:110px 1fr;">
+        <label for="raw_key">Key</label>
+        <input id="raw_key" type="text" />
+      </div>
+    
+      <div class="lrow">
+        <label for="raw_value">Value</label>
+        <input id="raw_value" type="number" step="0.1" />
+      </div>
+    </div>
+    <div class="limitsActions">
+      <button class="primary" id="btn_send_raw" type="button">Set Key/Value</button>
     </div>
   </div>
 </details>

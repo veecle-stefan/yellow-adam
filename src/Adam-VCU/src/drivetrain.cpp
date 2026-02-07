@@ -71,7 +71,7 @@ void DriveTrain::SendIndicators(bool left, bool right)
 void DriveTrain::SendPowerLimit(uint16_t maxThrottle, uint16_t maxSpeedFwd, uint16_t maxSpeedRev)
 {
     CommandItem cmd;
-    cmd.cmd = DriveCommand::SetPowerLimit;
+    cmd.cmd = DriveCommand::SetProfile;
     cmd.p1.u16 = maxThrottle;
     cmd.p2.u16 = maxSpeedFwd;
     cmd.p3.u16 = maxSpeedRev;
@@ -92,6 +92,22 @@ void DriveTrain::SendTuneTV(uint16_t id, float value)
     cmd.cmd = DriveCommand::TuneTVParam;
     cmd.p1.u16 = id;
     cmd.p2.f16 = value;
+    SendCommand(&cmd);
+}
+
+void DriveTrain::SendLimitRPM(float value)
+{
+    CommandItem cmd;
+    cmd.cmd = DriveCommand::SetMaxRPM;
+    cmd.p1.f16 = value;
+    SendCommand(&cmd);
+}
+
+void DriveTrain::SendLimitCurr(float value)
+{
+    CommandItem cmd;
+    cmd.cmd = DriveCommand::SetMaxCurrent;
+    cmd.p1.f16 = value;
     SendCommand(&cmd);
 }
 
@@ -294,7 +310,16 @@ DriveTrain::SafetyDecision DriveTrain::ControllerSafety(
         requestedMelody = MelodyPlayer::kFail;
     else if (r.beep == BeepRequest::BeepSuccess)
         requestedMelody = MelodyPlayer::kSuccess;
-    
+
+    // othere requests: Current or RPM limit
+    if (r.reqCurrLimit.has_value()) {
+        return {.cmd = Axle::RemoteCommand::CmdSetCurrentLimit, .payload = static_cast<uint8_t>(*r.reqCurrLimit * 10)};
+    }
+    if (r.reqRPMLimit.has_value())
+    {
+        return {.cmd = Axle::RemoteCommand::CmdSetSpeedLimit, .payload = static_cast<uint8_t>(*r.reqRPMLimit / 4)};
+    }
+
     if (requestedMelody)
         melody.start(requestedMelody);
     
@@ -528,7 +553,7 @@ DriveTrain::Requests DriveTrain::ProcessExtCmds(TickContext& ctx, VehicleState& 
                 state.indicatorsL = extCmd.p1.onOff;
                 state.indicatorsR = extCmd.p2.onOff;
                 break;
-            case DriveCommand::SetPowerLimit:
+            case DriveCommand::SetProfile:
                 {
                     uint16_t IDmaxPower, IDspdFwd, IDspdRev;
                     bool success = true;
@@ -540,6 +565,12 @@ DriveTrain::Requests DriveTrain::ProcessExtCmds(TickContext& ctx, VehicleState& 
                     success &= Tuning::SetByID(&ctx.params->TV, IDspdRev, extCmd.p3.u16);
                     r.beep = SafeBeep(r.beep, success ? BeepRequest::BeepSuccess : BeepRequest::BeepFailure);
                 }
+                break;
+            case DriveCommand::SetMaxCurrent:
+                r.reqCurrLimit = extCmd.p1.f16;
+                break;
+            case DriveCommand::SetMaxRPM:
+                r.reqRPMLimit = extCmd.p1.f16;
                 break;
             case DriveCommand::EnableExternalControl:
                 state.externalControl = extCmd.p1.onOff;

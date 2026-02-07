@@ -114,15 +114,48 @@ bool JSONInteraction::DispatchCommand(const String& msg, DriveTrain* drive)
 
       int p = msg.indexOf("\"id\":");
       if (p >= 0)
-        id = msg.substring(p + 5).toInt();
+      id = msg.substring(p + 5).toInt();
 
       p = msg.indexOf("\"v\":");
       if (p >= 0)
-        v = msg.substring(p + 4).toFloat();
+      v = msg.substring(p + 4).toFloat();
 
       if (id >= 0)
       {
-        drive->SendTuneTV((uint16_t)id, v); // queues DriveCommand::TuneTVParam
+      drive->SendTuneTV((uint16_t)id, v); // queues DriveCommand::TuneTVParam
+      return true;
+      }
+      return false;
+    }
+
+    // raw command: {"type":"cmd","name":"raw","key":"teset","val":0.4}
+    if (name == "raw")
+    {
+      String key;
+      float val = 0.f;
+
+      int p = msg.indexOf("\"key\":\"");
+      if (p >= 0)
+      {
+        p += 7;
+        int q = msg.indexOf('"', p);
+        if (q > p) key = msg.substring(p, q);
+      }
+
+      p = msg.indexOf("\"val\":");
+      if (p >= 0) {
+        val = msg.substring(p + 6).toFloat();
+      }
+
+      if (key.length() > 0)
+      {
+        if (key.equals("rpm")) {
+          drive->SendLimitRPM(val);
+        }
+        if (key.equals("curr"))
+        {
+          drive->SendLimitCurr(val);
+        }
         return true;
       }
       return false;

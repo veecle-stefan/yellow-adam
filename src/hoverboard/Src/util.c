@@ -915,7 +915,7 @@ void readInputRaw(void) {
           // flag field contains current limit in Amps (1-15A typical)
           if (commandL.payload > 0 && commandL.payload / 10 <= I_MOT_MAX)
           {
-            rtP_Left.i_max = rtP_Right.i_max = (int16_t)((commandL.payload * A2BIT_CONV / 10) << 4);
+            rtP_Left.i_max = rtP_Right.i_max = (((int16_t)commandL.payload * A2BIT_CONV / 10) << 4);
           }
           break;
 

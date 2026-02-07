@@ -71,7 +71,9 @@ public:
     {
         SetGear,
         SetIndicators,
-        SetPowerLimit,
+        SetProfile,
+        SetMaxRPM,
+        SetMaxCurrent,
         EnableExternalControl,
         SetHeadlight,
         Steer,
@@ -109,8 +111,10 @@ public:
     void SendPowerOff();
     void SendSteer(int16_t throttle, int16_t steer);
     void SendTuneTV(uint16_t id, float value);
+    void SendLimitRPM(float value);
+    void SendLimitCurr(float value);
 
-protected :
+protected:
     using MotorStates = std::optional<Axle::HistoryFrame>;
     using TickContext = TorqueVectoring::TickContext;
     using UserCmd = TorqueVectoring::UserCmd;
@@ -139,6 +143,8 @@ protected :
     struct Requests {
         BeepRequest beep = BeepRequest::NoBeep;
         bool reqPowerOff = false;
+        std::optional<float> reqCurrLimit = std::nullopt;
+        std::optional<float> reqRPMLimit = std::nullopt;
     };
 
     // ----- Members -----

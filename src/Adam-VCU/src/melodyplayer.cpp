@@ -24,7 +24,7 @@ std::optional<uint8_t> MelodyPlayer::tick()
 
     uint8_t val = tones_[index_];
 
-    if (++slowdown_ == 5)
+    if (++slowdown_ == 3)
     {
         slowdown_ = 0;
         ++index_;

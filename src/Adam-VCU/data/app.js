@@ -276,7 +276,7 @@ const tuningLast = {
     23: 40.0, // maxRealisticDecel
 
     // bias
-    24: 0.50, // DriveFrontShareLow
+    24: 0.5, // DriveFrontShareLow
     25: 0.3, // DriveFrontShareHigh
     26: 0.5, // BrakeFrontShareLow
     27: 0.8, // BrakeFrontShareHigh
@@ -294,6 +294,9 @@ const tuneValueOut = document.getElementById('tune_value_out');
 const tuneSliderEl = document.getElementById('tune_slider');
 const tuneMinMaxEl = document.getElementById('tune_minmax');
 const btnSendTune = document.getElementById('btn_send_tune');
+const RawKeyEl = document.getElementById('raw_key');
+const RawValEl = document.getElementById('raw_value');
+const btnSendRaw = document.getElementById('btn_send_raw');
 
 function fmt3(x) {
     const n = Number(x);
@@ -388,6 +391,15 @@ function initTuningUI() {
         tuneValueEl.value = fmt3(v);
         tuneSliderEl.value = String(v);
         tuneValueOut.textContent = fmt3(v);
+    });
+
+    btnSendRaw.addEventListener('click', () => {
+        const k = RawKeyEl.value;
+        const v = Number(RawValEl.value);
+
+        // Protocol: id + f16
+        // (Your firmware consumes extCmd.p1.u16=id and extCmd.p1.f16=value)
+        wsSend({ type: 'cmd', name: 'raw', key: k, val: v });
     });
 }
 
@@ -725,37 +737,46 @@ class WebSocketTransport {
         this._openTimer = 0;
     }
 
-     _clearOpenTimer() {
-        clearTimeout(this._openTimer); this._openTimer = 0;
-      }
+    _clearOpenTimer() {
+        clearTimeout(this._openTimer);
+        this._openTimer = 0;
+    }
 
     connect() {
         this.onState?.('connecting');
-        
-    try {
-        if (this.ws) {
-            this.ws.onopen = null;
-            this.ws.onclose = null;
-            this.ws.onerror = null;
-            this.ws.onmessage = null;
-            try { this.ws.close(); } catch {}
-            this.ws = null;
-        }
-    } catch {}
-    clearInterval(this._hbTimer); this._hbTimer = 0;
 
-    this.ws = new WebSocket(this.url);
-    // abort if we don't reach open in N ms
-    this._openTimer = setTimeout(() => {
-      if (!this.ws || this.ws.readyState === WebSocket.OPEN) return;
-      console.warn('WS open timeout -> aborting and retrying');
-      try { this.ws.onopen = null; this.ws.onclose = null; this.ws.onerror = null; this.ws.close(); } catch {}
-      this._clearOpenTimer();
-      // schedule reconnect (same behavior as onclose)
-      clearTimeout(this._reconnectTimer);
-      this._reconnectTimer = setTimeout(() => this.connect(), 800);
-    }, 10000); // 10s
-        
+        try {
+            if (this.ws) {
+                this.ws.onopen = null;
+                this.ws.onclose = null;
+                this.ws.onerror = null;
+                this.ws.onmessage = null;
+                try {
+                    this.ws.close();
+                } catch {}
+                this.ws = null;
+            }
+        } catch {}
+        clearInterval(this._hbTimer);
+        this._hbTimer = 0;
+
+        this.ws = new WebSocket(this.url);
+        // abort if we don't reach open in N ms
+        this._openTimer = setTimeout(() => {
+            if (!this.ws || this.ws.readyState === WebSocket.OPEN) return;
+            console.warn('WS open timeout -> aborting and retrying');
+            try {
+                this.ws.onopen = null;
+                this.ws.onclose = null;
+                this.ws.onerror = null;
+                this.ws.close();
+            } catch {}
+            this._clearOpenTimer();
+            // schedule reconnect (same behavior as onclose)
+            clearTimeout(this._reconnectTimer);
+            this._reconnectTimer = setTimeout(() => this.connect(), 800);
+        }, 10000); // 10s
+
         this.ws.onopen = () => {
             this._clearOpenTimer();
             this.onState?.('connected');
