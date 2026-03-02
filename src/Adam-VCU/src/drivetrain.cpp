@@ -557,12 +557,14 @@ DriveTrain::Requests DriveTrain::ProcessExtCmds(TickContext& ctx, VehicleState& 
                 {
                     uint16_t IDmaxPower, IDspdFwd, IDspdRev;
                     bool success = true;
-                    Tuning::IdByKey("maxDrivePower", IDmaxPower);
-                    Tuning::IdByKey("maxSpeedFwd", IDspdFwd);
-                    Tuning::IdByKey("maxSpeedRev", IDspdRev);
-                    success &= Tuning::SetByID(&ctx.params->TV, IDmaxPower, extCmd.p1.u16);
-                    success &= Tuning::SetByID(&ctx.params->TV, IDspdFwd, extCmd.p2.u16);
-                    success &= Tuning::SetByID(&ctx.params->TV, IDspdRev, extCmd.p3.u16);
+                    success &= Tuning::IdByKey("maxTorqueDrive", IDmaxPower);
+                    success &= Tuning::IdByKey("maxSpeedFwd", IDspdFwd);
+                    success &= Tuning::IdByKey("maxSpeedRev", IDspdRev);
+                    if (success) {
+                        success &= Tuning::SetByID(&ctx.params->TV, IDmaxPower, extCmd.p1.u16);
+                        success &= Tuning::SetByID(&ctx.params->TV, IDspdFwd, extCmd.p2.u16);
+                        success &= Tuning::SetByID(&ctx.params->TV, IDspdRev, extCmd.p3.u16);
+                    }
                     r.beep = SafeBeep(r.beep, success ? BeepRequest::BeepSuccess : BeepRequest::BeepFailure);
                 }
                 break;
