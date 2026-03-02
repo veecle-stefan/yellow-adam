@@ -11,7 +11,6 @@ WebServer::WebServer()
 
 bool WebServer::begin(const IPAddress& apIp, const char* hostname, QueueHandle_t statusQueue, DriveTrain* drive, uint32_t updateInterval)
 {
-  //TODO: We also need a way to stop the webserver so that it doesn't interfer with OTA
   if (_started) return false;
 
   _apIp = apIp;
@@ -70,6 +69,41 @@ bool WebServer::begin(const IPAddress& apIp, const char* hostname, QueueHandle_t
     });
 
   return true;
+}
+
+void WebServer::shutdown()
+{
+  if (!_started) return;
+
+  // 1. Kill the background status-publishing task first
+  if (_bgTask) {
+    vTaskDelete(_bgTask);
+    _bgTask = NULL;
+  }
+
+  // 2. Close every connected WebSocket client
+  _ws.closeAll();
+  _ws.cleanupClients();
+
+  // 3. Shut down the HTTP server (removes listeners & frees sockets)
+  _server.end();
+
+  // 4. Stop the DNS captive-portal server
+  _dns.stop();
+
+  // 5. Free double-buffer memory
+  delete[] _txBuf[0]; _txBuf[0] = nullptr;
+  delete[] _txBuf[1]; _txBuf[1] = nullptr;
+
+  // 6. Clean up synchronisation primitives
+  if (_txMutex)  { vSemaphoreDelete(_txMutex);  _txMutex  = nullptr; }
+  if (_wsMutex)  { vSemaphoreDelete(_wsMutex);  _wsMutex  = nullptr; }
+
+  _wsLastSeen.clear();
+  _wsCb = nullptr;
+  _started = false;
+
+  Serial.println("[Web] Server stopped for OTA");
 }
 
 void WebServer::_backgroundUpdates()

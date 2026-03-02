@@ -27,6 +27,10 @@ public:
   // apIp should usually be WiFi.softAPIP() (often 192.168.4.1)
   bool begin(const IPAddress& apIp, const char* hostname, QueueHandle_t statusQueue, DriveTrain* drive, uint32_t updateInterval);
 
+  // Tear down HTTP server, WebSocket, DNS, and background task
+  // so that OTA can proceed without interference.
+  void shutdown();
+
   // Must be called frequently in loop() for DNS captive portal handling
   void tidy();
 

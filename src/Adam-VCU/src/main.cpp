@@ -53,6 +53,7 @@ static IPAddress setupOTA()
   ArduinoOTA
     .onStart([]() {
       drive->Shutdown(); // stop all interfering high priority tasks
+      portal.shutdown(); // avoid network interference
       Serial.println("[OTA] Start");
       lights.SetOTA(true);
     })
